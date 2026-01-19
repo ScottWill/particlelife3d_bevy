@@ -1,0 +1,438 @@
+use bevy::{input::common_conditions::input_just_pressed, prelude::*};
+use rand::random;
+use std::fmt::{Debug, Display, Formatter, Result};
+
+use crate::{config::COLORS, traits::{NextVariant, PrevVariant}};
+
+pub struct ForceMatrixPlugin;
+
+impl Plugin for ForceMatrixPlugin {
+    fn build(&self, app: &mut App) {
+        app.insert_resource(ForceMatrix::new(COLORS, ForceMatrixType::default()));
+        app.add_systems(Update, (
+            next_force.run_if(input_just_pressed(KeyCode::BracketRight)),
+            prev_force.run_if(input_just_pressed(KeyCode::BracketLeft)),
+            negate_bodies.run_if(input_just_pressed(KeyCode::KeyN)),
+            shift_left.run_if(input_just_pressed(KeyCode::ArrowDown)),
+            shift_right.run_if(input_just_pressed(KeyCode::ArrowUp)),
+            shift_down.run_if(input_just_pressed(KeyCode::ArrowLeft)),
+            shift_up.run_if(input_just_pressed(KeyCode::ArrowRight)),
+        ));
+    }
+}
+
+fn negate_bodies(
+    mut forces: ResMut<ForceMatrix>,
+) {
+    forces.negate();
+}
+
+fn shift_left(
+    mut forces: ResMut<ForceMatrix>,
+) {
+    forces.shift_matrix(ForceShiftType::Row, -1);
+}
+
+fn shift_right(
+    mut forces: ResMut<ForceMatrix>,
+) {
+    forces.shift_matrix(ForceShiftType::Row, 1);
+}
+
+fn shift_up(
+    mut forces: ResMut<ForceMatrix>,
+) {
+    forces.shift_matrix(ForceShiftType::Column, -1);
+}
+
+fn shift_down(
+    mut forces: ResMut<ForceMatrix>,
+) {
+    forces.shift_matrix(ForceShiftType::Column, 1);
+}
+
+fn next_force(
+    mut forces: ResMut<ForceMatrix>,
+) {
+    let count = forces.color_count;
+    let next = forces.matrix_type.next();
+
+    *forces = ForceMatrix::new(count, next);
+}
+
+fn prev_force(
+    mut forces: ResMut<ForceMatrix>,
+) {
+    let count = forces.color_count;
+    let prev = forces.matrix_type.prev();
+
+    *forces = ForceMatrix::new(count, prev);
+}
+
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum ForceMatrixType {
+    Chains,
+    #[default]
+    Random,
+    Snakes,
+    // Symmetry(SymmetryForceMatrix),
+    Zeros,
+    Ones,
+}
+
+// impl Debug for ForceMatrixType {
+//     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+//         write!(f, "{}", match &self {
+//             ForceMatrixType::Chains => "Chains",
+//             ForceMatrixType::Random => "Random",
+//             ForceMatrixType::Snakes => "Snakes",
+//             ForceMatrixType::Zeros => "Zeros",
+//             ForceMatrixType::Ones => "Ones",
+//         })
+//     }
+// }
+
+impl PrevVariant for ForceMatrixType {
+    fn prev(&self) -> Self {
+        match self {
+            ForceMatrixType::Chains => ForceMatrixType::Ones,
+            ForceMatrixType::Random => ForceMatrixType::Chains,
+            ForceMatrixType::Snakes => ForceMatrixType::Random,
+            ForceMatrixType::Zeros  => ForceMatrixType::Snakes,
+            ForceMatrixType::Ones   => ForceMatrixType::Zeros,
+        }
+    }
+}
+
+impl NextVariant for ForceMatrixType {
+    fn next(&self) -> Self {
+        match self {
+            ForceMatrixType::Chains => ForceMatrixType::Random,
+            ForceMatrixType::Random => ForceMatrixType::Snakes,
+            ForceMatrixType::Snakes => ForceMatrixType::Zeros,
+            ForceMatrixType::Zeros  => ForceMatrixType::Ones,
+            ForceMatrixType::Ones   => ForceMatrixType::Chains,
+        }
+    }
+}
+
+impl ForceMatrixType {
+    fn force(self, x: usize, y: usize, w: usize) -> f64 {
+        match self {
+            ForceMatrixType::Chains => ChainsForceMatrix::force(x, y, w),
+            ForceMatrixType::Random => RandomForceMatrix::force(x, y, w),
+            ForceMatrixType::Snakes => SnakeForceMatrix::force(x, y, w),
+            ForceMatrixType::Zeros  => ZeroForceMatrix::force(x, y, w),
+            ForceMatrixType::Ones   => IdentForceMatrix::force(x, y, w),
+        }
+    }
+}
+
+enum ForceShiftType {
+    Column,
+    Row,
+}
+
+#[derive(Clone, Resource)]
+pub struct ForceMatrix {
+    pub data: Vec<f64>,
+    pub color_count: usize,
+    pub matrix_type: ForceMatrixType,
+}
+
+impl Display for ForceMatrix {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+        let forces = self.data
+            .chunks(self.color_count)
+            .map(|row| {
+                row
+                    .iter()
+                    .map(|v| match v.is_sign_negative() {
+                        true => format!("{v:.3}"),
+                        false => format!(" {v:.3}"),
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        write!(f, "Type: {:?}\nColors: {}\n{forces}\n", self.matrix_type, self.color_count)
+    }
+}
+
+impl ForceMatrix {
+
+    pub fn new(color_count: usize, matrix_type: ForceMatrixType) -> Self {
+        assert!(color_count > 0);
+        let data = (0..color_count * color_count)
+            .into_iter()
+            .map(|i| {
+                let x = i % color_count;
+                let y = i / color_count;
+                matrix_type.force(x, y, color_count)
+            })
+            .collect::<Vec<_>>();
+
+        Self { data, color_count, matrix_type }
+    }
+
+    // fn copy_to_clipboard(&self) {
+    //     let output = self.data
+    //         .chunks_exact(self.color_count)
+    //         .map(|chunk| chunk
+    //             .into_iter()
+    //             .map(|f| f.to_string())
+    //             .collect::<Vec<_>>()
+    //             .join(",")
+    //         )
+    //         .collect::<Vec<_>>()
+    //         .join("\n");
+    //     let mut clipboard = Clipboard::new().unwrap();
+    //     clipboard.set_text(output).unwrap();
+    // }
+
+    // fn paste_from_clipboard(&mut self) {
+    //     let mut clipboard = Clipboard::new().unwrap();
+    //     if let Ok(contents) = clipboard.get_text() {
+    //         let mut data = Vec::with_capacity(self.color_count * self.color_count);
+    //         for line in contents.lines() {
+    //             let parts = line.split(',').collect::<Vec<_>>();
+    //             for part in parts {
+    //                 if let Ok(num) = part.trim().parse::<f64>() {
+    //                     data.push(num.into());
+    //                 } else {
+    //                     break;
+    //                 }
+    //             }
+    //         }
+    //         if data.len() == self.data.len() {
+    //             self.data = data;
+    //         }
+    //     }
+    // }
+
+    #[inline]
+    fn data_ix(&self, x: usize, y: usize) -> usize {
+        x + y * self.color_count
+    }
+
+    #[inline]
+    fn get_data(&self, x: usize, y: usize) -> Option<&f64> {
+        let ix = self.data_ix(x, y);
+        self.data.get(ix)
+    }
+
+    #[inline]
+    pub fn get_force(&self, x: usize, y: usize) -> f64 {
+        match self.get_data(x, y) {
+            Some(force) => *force,
+            None => 0.0,
+        }
+    }
+
+    // fn abs(&mut self) {
+    //     for cell in &mut self.data {
+    //         *cell = cell.abs();
+    //     }
+    // }
+
+    pub fn negate(&mut self) {
+        for cell in &mut self.data {
+            *cell *= -1.0;
+        }
+    }
+
+    // pub fn expand(&mut self) {
+    //     let new_size = self.color_count + 1;
+    //     self.data = (0..new_size * new_size)
+    //         .into_iter()
+    //         .map(|i| {
+    //             let x = i % new_size;
+    //             let y = i / new_size;
+    //             match self.get_data(x, y) {
+    //                 Some(cell) => cell.clone(),
+    //                 None => {
+    //                     let f = match self.matrix_type {
+    //                         ForceMatrixType::Chains(p) => p.force(x, y, new_size),
+    //                         ForceMatrixType::Random(p) => p.force(x, y, new_size),
+    //                         ForceMatrixType::Snakes(p) => p.force(x, y, new_size),
+    //                         ForceMatrixType::Zeros(p) => p.force(x, y, new_size),
+    //                         ForceMatrixType::Ones(p) => p.force(x, y, new_size),
+    //                     };
+    //                     f.into()
+    //                 },
+    //             }
+    //         })
+    //         .collect::<Vec<_>>();
+    //     self.color_count = new_size;
+    // }
+
+    // pub fn shrink(&mut self) {
+    //     if self.color_count > 1 {
+    //         let new_len = self.data.len() - self.color_count;
+    //         self.color_count -= 1;
+    //         self.data = self.data[0..new_len]
+    //             .chunks_exact(self.color_count + 1)
+    //             .into_iter()
+    //             .flat_map(|chunks|
+    //                 chunks
+    //                     .iter()
+    //                     .take(self.color_count)
+    //                     .map(|cell| cell.clone())
+    //             )
+    //             .collect::<Vec<_>>();
+    //     }
+    // }
+
+    fn shift_matrix(&mut self, shift_type: ForceShiftType, amount: isize) {
+        self.data = self.data
+            .iter()
+            .enumerate()
+            .map(|(i, _)| {
+                let (x, y) = match shift_type {
+                    ForceShiftType::Column => (
+                        (((i % self.color_count) as isize) + amount).rem_euclid(self.color_count as isize) as usize,
+                        i / self.color_count
+                    ),
+                    ForceShiftType::Row => (
+                        i % self.color_count,
+                        (((i / self.color_count) as isize) + amount).rem_euclid(self.color_count as isize) as usize
+                    ),
+                };
+                self.get_force(x, y)
+            })
+            .collect();
+    }
+
+    // pub fn force_matrix_ui(&mut self, ui: &mut Ui, config: &mut ConfigState) {
+    //     ui.horizontal(|ui| {
+    //         if ui.button(" < ").clicked() {
+    //             self.shift_matrix(ForceShiftType::Column, 1);
+    //         }
+    //         if ui.button(" > ").clicked() {
+    //             self.shift_matrix(ForceShiftType::Column, -1);
+    //         }
+    //         if ui.button(" ⬆ ").clicked() {
+    //             self.shift_matrix(ForceShiftType::Row, 1);
+    //         }
+    //         if ui.button(" ⬇ ").clicked() {
+    //             self.shift_matrix(ForceShiftType::Row, -1);
+    //         }
+    //         if ui.button(" Abs ").clicked() {
+    //             self.abs();
+    //         }
+    //         if ui.button(" Neg ").clicked() {
+    //             self.negate();
+    //         }
+    //         if ui.button(" Copy ").clicked() {
+    //             self.copy_to_clipboard();
+    //         }
+    //         if ui.button(" Paste ").clicked() {
+    //             self.paste_from_clipboard();
+    //         }
+    //     });
+    //     // todo: force matric color boxes
+    //     egui::ScrollArea::both()
+    //         .max_height(300.0)
+    //         .show(ui, |ui| {
+    //             egui::Grid::new("force_matrix")
+    //                 .spacing([1.0, 1.0])
+    //                 .striped(true)
+    //                 .show(ui, |ui| {
+    //                     for y in 0..self.color_count {
+    //                         let y = y * self.color_count;
+    //                         for x in 0..self.color_count {
+    //                             if let Some(cell) = self.data.get_mut(x + y) {
+    //                                 ui.add(DragValue::new(cell).speed(0.001));
+    //                             }
+    //                         }
+    //                         ui.end_row();
+    //                     }
+    //                 });
+    //         });
+
+    //     // forces select
+    //     ui.horizontal(|ui| {
+    //         if ui.button(" Update ").clicked() {
+    //             *self = ForceMatrix::new(config.colors_count as usize, config.force_matrix_option);
+    //         }
+    //         egui::ComboBox::from_label("Matrix")
+    //             .selected_text(format!("{:?}", config.force_matrix_option))
+    //             .show_ui(ui, |ui| {
+    //                 // ui.style_mut().wrap = Some(false);
+    //                 ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
+    //                 ui.set_min_width(60.0);
+    //                 for f in ForceMatrixType::iter() {
+    //                     ui.selectable_value(&mut config.force_matrix_option, f, format!("{f}"));
+    //                 }
+    //             });
+    //         ui.end_row();
+    //     });
+
+    // }
+
+}
+
+trait MatrixProvider {
+    fn force(x: usize, y: usize, w: usize) -> f64;
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ChainsForceMatrix;
+impl MatrixProvider for ChainsForceMatrix {
+    fn force(x: usize, y: usize, w: usize) -> f64 {
+        let amt = 1.0;
+        match (y, x) {
+            (y, x) if y == x => amt,
+            (y, x) if y == (x + 1) % w => amt,
+            (y, x) if y == (x + w - 1) % w => amt,
+            _ => 0.0
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct RandomForceMatrix;
+impl MatrixProvider for RandomForceMatrix {
+    fn force(_: usize, _: usize, _: usize) -> f64 {
+        random::<f64>() * 2.0 - 1.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct SnakeForceMatrix;
+impl MatrixProvider for SnakeForceMatrix {
+    fn force(x: usize, y: usize, w: usize) -> f64 {
+        match (y, x) {
+            (y, x) if y == x => 1.0,
+            (y, x) if y == (x + 1) % w => 0.2,
+            _ => 0.0,
+        }
+    }
+}
+
+// #[derive(Clone, Copy, Default, Debug, PartialEq)]
+// pub struct SymmetryForceMatrix(pub usize);
+// impl MatrixProvider for SymmetryForceMatrix {
+//     fn force(self, _x: usize, _y: usize, _w: usize) -> f64 {
+//         todo!()
+//     }
+// }
+
+#[derive(Clone, Copy, Default, Debug, PartialEq)]
+pub struct ZeroForceMatrix;
+impl MatrixProvider for ZeroForceMatrix {
+    fn force(_: usize, _: usize, _: usize) -> f64 {
+        0.0
+    }
+}
+
+#[derive(Clone, Copy, Default, Debug, PartialEq)]
+pub struct IdentForceMatrix;
+impl MatrixProvider for IdentForceMatrix {
+    fn force(_: usize, _: usize, _: usize) -> f64 {
+        1.0
+    }
+}
