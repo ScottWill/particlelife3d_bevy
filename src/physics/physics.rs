@@ -178,7 +178,7 @@ fn get_force(body0: &PointBody, body1: &PointBody, forces: &ForceMatrix) -> DVec
     if dist <= MIN_REL_DIST {
         force = dist * MIN_DIST_RECIP - 1.0;
     } else {
-        let f = forces.get_force(body0.color, body1.color);
+        let f = forces[(body0.color, body1.color)];
         if f == 0.0 { return DVec3::ZERO }
         force = f * (1.0 - (1.0 + MIN_REL_DIST - 2.0 * dist) * INV_MIN_DIST_RECIP);
     };

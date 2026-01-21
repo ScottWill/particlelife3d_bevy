@@ -55,6 +55,9 @@ fn setup_ui(
     mut commands: Commands,
     mut gizmos: ResMut<Assets<GizmoAsset>>,
 ) {
+    let text_color = TextColor(Color::linear_rgb(0.0, 1.0, 0.0));
+    let text_font = TextFont::from_font_size(12.0);
+    let text_shadow = TextShadow { offset: Vec2::splat(1.0), ..default() };
     commands.spawn((
         Node {
             margin: UiRect::axes(px(1), px(47)),
@@ -64,23 +67,27 @@ fn setup_ui(
             DebugText,
             BackgroundColor(Color::linear_rgba(0.3, 0.3, 0.3, 0.3)),
             Text::new("---- Debug Info ----\n"),
-            TextColor(Color::linear_rgb(0.0, 1.0, 0.0)),
-            TextFont::from_font_size(12.0),
+            text_color,
+            text_font.clone(),
+            text_shadow,
             children![
                 (
                     TextSpan::new("   --- Forces ---\n"),
-                    TextColor(Color::linear_rgb(0.0, 1.0, 0.0)),
-                    TextFont::from_font_size(12.0),
+                    text_color,
+                    text_font.clone(),
+                    text_shadow,
                 ),
                 (
                     TextSpan::default(),
-                    TextColor(Color::linear_rgb(0.0, 1.0, 0.0)),
-                    TextFont::from_font_size(12.0),
+                    text_color,
+                    text_font.clone(),
+                    text_shadow,
                 ),
                 (
                     TextSpan::default(),
-                    TextColor(Color::linear_rgb(0.0, 1.0, 0.0)),
-                    TextFont::from_font_size(12.0),
+                    text_color,
+                    text_font.clone(),
+                    text_shadow,
                 ),
             ]
         )],
@@ -128,7 +135,7 @@ fn debug_ui(
 pub struct DebugDurations(HashMap<String,VecDeque<f32>>);
 
 impl Display for DebugDurations {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+    fn fmt(&self, f: &mut Formatter) -> Result {
         let result = self
             .iter()
             .map(|(k, v)| {
@@ -162,6 +169,6 @@ fn avg_duration(vdq: &VecDeque<f32>) -> f32 {
     if vdq.len() == 0 { return 0.0 }
     if vdq.len() == 1 { return vdq[0] }
 
-    let total = vdq.iter().sum::<f32>();
+    let total: f32 = vdq.iter().sum();
     total / vdq.len() as f32
 }

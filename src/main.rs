@@ -37,12 +37,12 @@ fn main() {
         .add_systems(Update, (
             match_body_count.run_if(on_message::<UpdateBodies>).after(reset_bodies),
             reset_bodies.run_if(input_just_pressed(KeyCode::KeyR).and(input_pressed(KeyCode::ShiftLeft))),
-            pan_bodies::<-1,  0,  0>.run_if(input_pressed(KeyCode::KeyA)),
+            pan_bodies::< 0,  0,  1>.run_if(input_pressed(KeyCode::KeyS)),
+            pan_bodies::< 0,  0, -1>.run_if(input_pressed(KeyCode::KeyW)),
+            pan_bodies::< 0,  1,  0>.run_if(input_pressed(KeyCode::KeyQ)),
+            pan_bodies::< 0, -1,  0>.run_if(input_pressed(KeyCode::KeyE)),
             pan_bodies::< 1,  0,  0>.run_if(input_pressed(KeyCode::KeyD)),
-            pan_bodies::< 0, -1,  0>.run_if(input_pressed(KeyCode::KeyS)),
-            pan_bodies::< 0,  1,  0>.run_if(input_pressed(KeyCode::KeyW)),
-            pan_bodies::< 0,  0, -1>.run_if(input_pressed(KeyCode::KeyQ)),
-            pan_bodies::< 0,  0,  1>.run_if(input_pressed(KeyCode::KeyE)),
+            pan_bodies::<-1,  0,  0>.run_if(input_pressed(KeyCode::KeyA)),
         ))
         .run();
 }
@@ -151,7 +151,7 @@ fn build_batch(
         let color = palette.random();
         let bundle = BodyBundle {
             body: PointBody::new(color, position),
-            material: MeshMaterial3d(palette.get(color).clone()),
+            material: MeshMaterial3d(palette[color].clone()),
             mesh: Mesh3d(mesh.clone()),
             transform: Transform::from_translation(translate(position)),
         };

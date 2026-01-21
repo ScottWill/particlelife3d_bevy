@@ -1,6 +1,6 @@
 use bevy::{input::common_conditions::input_just_pressed, prelude::*};
 use rand::random;
-use std::fmt::{Debug, Display, Formatter, Result};
+use std::{fmt::{Debug, Display, Formatter, Result}, ops::Index};
 
 use crate::{config::COLORS, traits::{NextVariant, PrevVariant}};
 
@@ -74,6 +74,8 @@ fn prev_force(
 pub enum ForceMatrixType {
     Chains,
     #[default]
+    Checkered,
+    RandomEx,
     Random,
     Snakes,
     // Symmetry(SymmetryForceMatrix),
@@ -96,11 +98,13 @@ pub enum ForceMatrixType {
 impl PrevVariant for ForceMatrixType {
     fn prev(&self) -> Self {
         match self {
-            ForceMatrixType::Chains => ForceMatrixType::Ones,
-            ForceMatrixType::Random => ForceMatrixType::Chains,
-            ForceMatrixType::Snakes => ForceMatrixType::Random,
-            ForceMatrixType::Zeros  => ForceMatrixType::Snakes,
-            ForceMatrixType::Ones   => ForceMatrixType::Zeros,
+            ForceMatrixType::Chains    => ForceMatrixType::Checkered,
+            ForceMatrixType::Random    => ForceMatrixType::Chains,
+            ForceMatrixType::Snakes    => ForceMatrixType::Random,
+            ForceMatrixType::Zeros     => ForceMatrixType::Snakes,
+            ForceMatrixType::Ones      => ForceMatrixType::Zeros,
+            ForceMatrixType::RandomEx  => ForceMatrixType::Ones,
+            ForceMatrixType::Checkered => ForceMatrixType::RandomEx,
         }
     }
 }
@@ -108,11 +112,13 @@ impl PrevVariant for ForceMatrixType {
 impl NextVariant for ForceMatrixType {
     fn next(&self) -> Self {
         match self {
-            ForceMatrixType::Chains => ForceMatrixType::Random,
-            ForceMatrixType::Random => ForceMatrixType::Snakes,
-            ForceMatrixType::Snakes => ForceMatrixType::Zeros,
-            ForceMatrixType::Zeros  => ForceMatrixType::Ones,
-            ForceMatrixType::Ones   => ForceMatrixType::Chains,
+            ForceMatrixType::Chains    => ForceMatrixType::Random,
+            ForceMatrixType::Random    => ForceMatrixType::Snakes,
+            ForceMatrixType::Snakes    => ForceMatrixType::Zeros,
+            ForceMatrixType::Zeros     => ForceMatrixType::Ones,
+            ForceMatrixType::Ones      => ForceMatrixType::RandomEx,
+            ForceMatrixType::RandomEx  => ForceMatrixType::Checkered,
+            ForceMatrixType::Checkered => ForceMatrixType::Chains,
         }
     }
 }
@@ -120,11 +126,13 @@ impl NextVariant for ForceMatrixType {
 impl ForceMatrixType {
     fn force(self, x: usize, y: usize, w: usize) -> f64 {
         match self {
-            ForceMatrixType::Chains => ChainsForceMatrix::force(x, y, w),
-            ForceMatrixType::Random => RandomForceMatrix::force(x, y, w),
-            ForceMatrixType::Snakes => SnakeForceMatrix::force(x, y, w),
-            ForceMatrixType::Zeros  => ZeroForceMatrix::force(x, y, w),
-            ForceMatrixType::Ones   => IdentForceMatrix::force(x, y, w),
+            ForceMatrixType::Chains    => ChainsForceMatrix::force(x, y, w),
+            ForceMatrixType::Random    => RandomForceMatrix::force(x, y, w),
+            ForceMatrixType::Snakes    => SnakeForceMatrix::force(x, y, w),
+            ForceMatrixType::Zeros     => ZeroForceMatrix::force(x, y, w),
+            ForceMatrixType::Ones      => IdentForceMatrix::force(x, y, w),
+            ForceMatrixType::RandomEx  => RandomExForceMatrix::force(x, y, w),
+            ForceMatrixType::Checkered => CheckeredForceMatrix::force(x, y, w),
         }
     }
 }
@@ -142,7 +150,7 @@ pub struct ForceMatrix {
 }
 
 impl Display for ForceMatrix {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+    fn fmt(&self, f: &mut Formatter) -> Result {
         let forces = self.data
             .chunks(self.color_count)
             .map(|row| {
@@ -159,6 +167,17 @@ impl Display for ForceMatrix {
             .join("\n");
 
         write!(f, "Type: {:?}\nColors: {}\n{forces}\n", self.matrix_type, self.color_count)
+    }
+}
+
+impl Index<(usize,usize)> for ForceMatrix {
+    type Output = f64;
+
+    fn index(&self, (x, y): (usize,usize)) -> &Self::Output {
+        match self.get_data(x, y) {
+            Some(force) => force,
+            None => &0.0,
+        }
     }
 }
 
@@ -224,13 +243,13 @@ impl ForceMatrix {
         self.data.get(ix)
     }
 
-    #[inline]
-    pub fn get_force(&self, x: usize, y: usize) -> f64 {
-        match self.get_data(x, y) {
-            Some(force) => *force,
-            None => 0.0,
-        }
-    }
+    // #[inline]
+    // pub fn get_force(&self, x: usize, y: usize) -> f64 {
+    //     match self.get_data(x, y) {
+    //         Some(force) => *force,
+    //         None => 0.0,
+    //     }
+    // }
 
     // fn abs(&mut self) {
     //     for cell in &mut self.data {
@@ -301,7 +320,7 @@ impl ForceMatrix {
                         (((i / self.color_count) as isize) + amount).rem_euclid(self.color_count as isize) as usize
                     ),
                 };
-                self.get_force(x, y)
+                self[(x, y)]
             })
             .collect();
     }
@@ -394,10 +413,26 @@ impl MatrixProvider for ChainsForceMatrix {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct CheckeredForceMatrix;
+impl MatrixProvider for CheckeredForceMatrix {
+    fn force(x: usize, y: usize, _: usize) -> f64 {
+        if x % 2 == y % 2 { -1.0 } else { 1.0 }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct RandomForceMatrix;
 impl MatrixProvider for RandomForceMatrix {
     fn force(_: usize, _: usize, _: usize) -> f64 {
         random::<f64>() * 2.0 - 1.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct RandomExForceMatrix;
+impl MatrixProvider for RandomExForceMatrix {
+    fn force(x: usize, y: usize, _: usize) -> f64 {
+        if x == y { 0.0 } else { random::<f64>() * 2.0 - 1.0 }
     }
 }
 

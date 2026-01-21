@@ -18,8 +18,9 @@ fn create_resource(
     commands.insert_resource(Palette::new(&mut materials, COLORS));
 }
 
-#[derive(Resource)]
+#[derive(Deref, Resource)]
 pub struct Palette {
+    #[deref]
     data: Vec<Handle<StandardMaterial>>,
     size: usize,
 }
@@ -39,10 +40,6 @@ impl Palette {
                 .collect(),
             size,
         }
-    }
-
-    pub fn get(&self, i: usize) -> &Handle<StandardMaterial> {
-        &self.data[i]
     }
 
     pub fn random(&self) -> usize {
