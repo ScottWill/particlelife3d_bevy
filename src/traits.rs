@@ -37,9 +37,8 @@ impl FpsOverlay for FpsOverlayPlugin {
     fn overlay() -> Self {
         Self {
             config: FpsOverlayConfig {
-                text_config: TextFont::default().with_font_size(12.0),
+                text_config: TextFont::from_font_size(12.0),
                 text_color: Color::linear_rgb(0.0, 1.0, 0.0),
-                frame_time_graph_config: FrameTimeGraphConfig::target_fps(60.0),
                 ..Default::default()
             },
         }
