@@ -1,7 +1,8 @@
 use std::time::Instant;
 
 use bevy::math::DVec3;
-use rayon::iter::{IntoParallelRefMutIterator as _, IndexedParallelIterator as _, ParallelIterator as _};
+use bevy::prelude::*;
+use rayon::iter::{IndexedParallelIterator as _, IntoParallelRefMutIterator as _, ParallelIterator as _};
 
 use crate::debug::DebugDurations;
 
@@ -13,104 +14,141 @@ const NEIGHBORS: [[isize; 2]; 9] = [
     [-1,  1], [0,  1], [1,  1],
 ];
 
-#[derive(Default)]
-pub struct IslandManager {
-    islands: Vec<Vec<usize>>, // islands and their per step computed body indicies
-    neighbor_ixs: Vec<[usize; 27]>, // pre-cached neighbor indices
-    neighbors: Vec<Vec<usize>>, // per-step computed bodies per island
-    side_f64: f64,
-    side: usize,
+/// The grid cells (islands). Each cell holds the body indices currently in it.
+#[derive(Resource)]
+pub struct Islands(pub Vec<Vec<usize>>);
+
+/// Pre-cached neighbor indices for each island cell.
+#[derive(Resource)]
+pub struct IslandNeighborIxs(pub Vec<[usize; 27]>);
+
+/// Per-island aggregated body indices from all neighboring cells.
+#[derive(Resource)]
+pub struct IslandNeighborhoods(pub Vec<Vec<usize>>);
+
+/// Grid dimension metadata.
+#[derive(Resource)]
+pub struct IslandGrid {
+    pub side: usize,
+    pub side_f64: f64,
 }
 
-impl IslandManager {
-    pub fn new(max_radius: f64) -> Self {
-        let side = max_radius.recip().floor() as usize;
-        let size = side * side * side;
-        // build and return self
-        let mut this = Self {
-            islands: vec![vec![]; size],
-            neighbor_ixs: Vec::with_capacity(size),
-            neighbors: vec![vec![]; size],
-            side_f64: side as f64,
-            side,
-        };
-        this.setup_neighbors();
-        this
+pub struct IslandsPlugin;
+
+impl Plugin for IslandsPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<BodySnapshots>();
+        app.add_systems(Startup, setup_islands);
     }
+}
 
-    // cache the computed indices of each island's group
-    fn setup_neighbors(&mut self) {
-        let side = self.side as isize;
-        // for each island
-        for i in 0..side * side * side {
-            let x = i % side;
-            let y = i % (side * side) / side;
-            let z = i / (side * side);
+fn setup_islands(
+    mut commands: Commands,
+) {
+    const MAX_DIST: f64 = 0.045;
 
-            let mut neighborhood = [0; 27];
-            let mut i = 0;
-            // find the index of each surrounding island
-            for m in -1..=1 {
-                for n in &NEIGHBORS {
-                    let u = x + n[0];
-                    let v = y + n[1];
-                    let w = z + m;
-                    let j = u.rem_euclid(side) + v.rem_euclid(side) * side + w.rem_euclid(side) * side * side;
-                    neighborhood[i] = j as usize;
-                    i += 1;
-                }
-            }
-            self.neighbor_ixs.push(neighborhood);
-        }
-    }
+    let side = MAX_DIST.recip().floor() as usize;
+    let size = side * side * side;
 
-    // add each body's vec index into the appropriate island
-    pub fn index_positions(&mut self, bodies: &[BodySnapshot], durations: &mut DebugDurations) {
+    let islands = Islands(vec![vec![]; size]);
+    let neighborhoods = IslandNeighborhoods(vec![vec![]; size]);
 
-        let now = Instant::now();
+    // Pre-compute neighbor indices
+    let neighbor_ixs = compute_neighbor_ixs(side, size);
 
-        // clear all the islands w/o reallocating memory
-        for island in &mut self.islands {
-            island.clear();
-        }
+    let grid = IslandGrid {
+        side,
+        side_f64: side as f64,
+    };
 
-        // for each body, add its index to the appropriate island
-        // based on its current position
-        for (bx, body) in bodies.iter().enumerate() {
-            let ix = self.get_local_island_ix(body.position);
-            if let Some(island) = self.islands.get_mut(ix) {
-                island.push(bx);
+    commands.insert_resource(islands);
+    commands.insert_resource(IslandNeighborIxs(neighbor_ixs));
+    commands.insert_resource(neighborhoods);
+    commands.insert_resource(grid);
+}
+
+fn compute_neighbor_ixs(side: usize, size: usize) -> Vec<[usize; 27]> {
+    let s = side as isize;
+    let mut result = Vec::with_capacity(size);
+
+    for i in 0..s * s * s {
+        let x = i % s;
+        let y = i % (s * s) / s;
+        let z = i / (s * s);
+
+        let mut neighborhood = [0usize; 27];
+        let mut idx = 0;
+        for m in -1..=1 {
+            for n in &NEIGHBORS {
+                let u = x + n[0];
+                let v = y + n[1];
+                let w = z + m;
+                let j = u.rem_euclid(s) + v.rem_euclid(s) * s + w.rem_euclid(s) * s * s;
+                neighborhood[idx] = j as usize;
+                idx += 1;
             }
         }
-
-        // for each island, find all body indexes for its local neighborhood
-        self.neighbors
-            .par_iter_mut()
-            .enumerate()
-            .for_each(|(i, neighbors)| {
-                neighbors.clear();
-                for nix in &self.neighbor_ixs[i] {
-                    neighbors.extend_from_slice(&self.islands[*nix]);
-                }
-            });
-
-        durations.add("islands", now.elapsed());
-
+        result.push(neighborhood);
     }
 
-    #[inline]
-    pub fn get_neighboring_ixs(&self, pos: DVec3) -> Option<&Vec<usize>> {
-        let ix = self.get_local_island_ix(pos);
-        self.neighbors.get(ix)
-    }
+    result
+}
 
-    #[inline]
-    fn get_local_island_ix(&self, pos: DVec3) -> usize {
-        let max = self.side_f64 - 1.0;
-        let x = (pos.x * self.side_f64).clamp(0.0, max) as usize;
-        let y = (pos.y * self.side_f64).clamp(0.0, max) as usize;
-        let z = (pos.z * self.side_f64).clamp(0.0, max) as usize;
-        x + y * self.side + z * self.side * self.side
+/// System 1: Clear all island cells.
+pub fn clear_islands(
+    mut islands: ResMut<Islands>,
+) {
+    for island in &mut islands.0 {
+        island.clear();
     }
+}
 
+/// System 2: Assign each body to its island cell based on position.
+pub fn assign_islands(
+    mut islands: ResMut<Islands>,
+    snapshots: Res<BodySnapshots>,
+    grid: Res<IslandGrid>,
+) {
+    for (bx, body) in snapshots.0.iter().enumerate() {
+        let ix = get_island_ix(body.position, &grid);
+        if let Some(island) = islands.0.get_mut(ix) {
+            island.push(bx);
+        }
+    }
+}
+
+/// System 3: Build per-island neighborhoods from neighbor indices (parallel).
+pub fn build_neighborhoods(
+    mut debug_info: ResMut<DebugDurations>,
+    mut neighborhoods: ResMut<IslandNeighborhoods>,
+    islands: Res<Islands>,
+    neighbor_ixs: Res<IslandNeighborIxs>,
+) {
+    let now = Instant::now();
+
+    neighborhoods.0
+        .par_iter_mut()
+        .enumerate()
+        .for_each(|(i, neighbors)| {
+            neighbors.clear();
+            for nix in &neighbor_ixs.0[i] {
+                neighbors.extend_from_slice(&islands.0[*nix]);
+            }
+        });
+
+    debug_info.add("islands", now.elapsed());
+}
+
+/// Shared resource holding per-frame body snapshots.
+#[derive(Default, Resource)]
+pub struct BodySnapshots(pub Vec<BodySnapshot>);
+
+/// Compute the island grid index for a given position.
+#[inline]
+pub fn get_island_ix(pos: DVec3, grid: &IslandGrid) -> usize {
+    let max = grid.side_f64 - 1.0;
+    let x = (pos.x * grid.side_f64).clamp(0.0, max) as usize;
+    let y = (pos.y * grid.side_f64).clamp(0.0, max) as usize;
+    let z = (pos.z * grid.side_f64).clamp(0.0, max) as usize;
+    x + y * grid.side + z * grid.side * grid.side
 }

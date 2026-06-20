@@ -1,7 +1,7 @@
 mod bodies;
 pub mod forces;
-mod islands;
+pub mod islands;
 mod physics;
 
-pub use bodies::{PointBody, PointColor, PointPosition, PointVelocity};
+pub use bodies::{PointBody, PointPosition};
 pub use physics::ParticlePhysicsPlugin;

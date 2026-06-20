@@ -8,10 +8,13 @@ use crate::physics::bodies::BodyPlugin;
 use crate::{next_state, debug::DebugDurations, traits::NextVariant, translate};
 use super::bodies::{BodySnapshot, PointColor, PointPosition, PointVelocity};
 use super::forces::{ForceMatrix, ForceMatrixPlugin};
-use super::islands::IslandManager;
+use super::islands::{
+    BodySnapshots, IslandGrid, IslandNeighborhoods, IslandsPlugin,
+    assign_islands, build_neighborhoods, clear_islands, get_island_ix,
+};
 
-const MAX_DIST: f64 = 0.045; // The maximum distance that a particle can interact with another
-const MIN_REL_DIST: f64 = 1.0 / 3.0; // The minimum relative distance that two particles can interact with
+const MAX_DIST: f64 = 0.045;
+const MIN_REL_DIST: f64 = 1.0 / 3.0;
 const MAX_DIST_RECIP: f64 = 1.0 / MAX_DIST;
 const MAX_DIST_SQRD: f64 = MAX_DIST * MAX_DIST;
 const MIN_DIST_RECIP: f64 = 1.0 / MIN_REL_DIST;
@@ -33,6 +36,22 @@ impl NextVariant for PhysicsRunState {
     }
 }
 
+/// Holds computed forces per body for the current physics tick.
+#[derive(Default, Resource)]
+struct ParticleForces(Vec<DVec3>);
+
+/// When set, the physics pipeline runs once then returns to Paused.
+#[derive(Default, Resource)]
+struct StepOnce(bool);
+
+/// SystemSet for island computation. Runs in FixedUpdate before physics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SystemSet)]
+struct IslandSet;
+
+/// SystemSet for the physics pipeline (snapshot, forces, apply).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SystemSet)]
+struct PhysicsSet;
+
 pub struct ParticlePhysicsPlugin;
 
 impl Plugin for ParticlePhysicsPlugin {
@@ -40,154 +59,146 @@ impl Plugin for ParticlePhysicsPlugin {
         app.add_plugins((
             BodyPlugin,
             ForceMatrixPlugin,
+            IslandsPlugin,
         ));
         app.init_state::<PhysicsRunState>();
-        app.init_resource::<ParticlePhysics>();
+        app.init_resource::<ParticleForces>();
+        app.init_resource::<StepOnce>();
+
         app.add_systems(Update, (
             next_state::<PhysicsRunState>.run_if(input_just_pressed(KeyCode::Enter)),
-            step_bodies.run_if(input_pressed(KeyCode::Space)),
+            trigger_step.run_if(input_pressed(KeyCode::Space)),
         ));
+
+        app.configure_sets(FixedUpdate, IslandSet.before(PhysicsSet));
+
         app.add_systems(FixedUpdate, (
-            update_bodies.run_if(in_state(PhysicsRunState::Running)),
+            clear_islands,
+            snapshot_bodies,
+            assign_islands,
+            build_neighborhoods,
+        ).chain().in_set(IslandSet).run_if(
+            in_state(PhysicsRunState::Running)
         ));
+
+        app.add_systems(FixedUpdate, (
+            compute_forces,
+            apply_forces,
+            finish_step,
+        ).chain().in_set(PhysicsSet).run_if(
+            in_state(PhysicsRunState::Running)
+        ));
+
         app.add_systems(FixedPostUpdate, translate_bodies);
     }
 }
 
-fn step_bodies(
-    mut bodies: Local<Vec<BodySnapshot>>,
-    mut debug_info: ResMut<DebugDurations>,
-    mut physics: ResMut<ParticlePhysics>,
-    mut query: Query<(&PointColor, &mut PointPosition, &mut PointVelocity)>,
+/// Pressing Space sets the state to Running with a step-once flag.
+fn trigger_step(
     mut next_state: ResMut<NextState<PhysicsRunState>>,
-    force_matrix: Res<ForceMatrix>,
+    mut step_once: ResMut<StepOnce>,
 ) {
-    next_state.set(PhysicsRunState::Paused);
-    physics_step(
-        &mut bodies,
-        &mut debug_info,
-        &mut physics,
-        &mut query,
-        &force_matrix,
-        1.0 / 480.0,
-    );
+    step_once.0 = true;
+    next_state.set(PhysicsRunState::Running);
 }
 
-fn update_bodies(
-    mut bodies: Local<Vec<BodySnapshot>>,
-    mut debug_info: ResMut<DebugDurations>,
-    mut physics: ResMut<ParticlePhysics>,
-    mut query: Query<(&PointColor, &mut PointPosition, &mut PointVelocity)>,
-    force_matrix: Res<ForceMatrix>,
-    time: Res<Time<Virtual>>,
+/// After a step-once tick completes, return to Paused.
+fn finish_step(
+    mut next_state: ResMut<NextState<PhysicsRunState>>,
+    mut step_once: ResMut<StepOnce>,
 ) {
-    physics_step(
-        &mut bodies,
-        &mut debug_info,
-        &mut physics,
-        &mut query,
-        &force_matrix,
-        time.delta_secs_f64(),
-    );
+    if step_once.0 {
+        step_once.0 = false;
+        next_state.set(PhysicsRunState::Paused);
+    }
 }
 
-fn physics_step(
-    bodies: &mut Vec<BodySnapshot>,
-    debug_info: &mut DebugDurations,
-    physics: &mut ParticlePhysics,
-    query: &mut Query<(&PointColor, &mut PointPosition, &mut PointVelocity)>,
-    force_matrix: &ForceMatrix,
-    dt: f64,
+/// Collect body snapshots into the shared resource.
+fn snapshot_bodies(
+    mut snapshots: ResMut<BodySnapshots>,
+    query: Query<(&PointColor, &PointPosition)>,
 ) {
-    const DRAG_HALFLIFE: f64 = 1.0 / 0.043;
-
-    bodies.clear();
-
-    for (color, position, _) in query.iter() {
-        bodies.push(BodySnapshot {
+    snapshots.0.clear();
+    for (color, position) in query.iter() {
+        snapshots.0.push(BodySnapshot {
             color: color.0,
             position: position.0,
         });
     }
+}
 
-    if bodies.is_empty() { return }
-
-    let forces = physics.get_forces(bodies.as_slice(), force_matrix, debug_info);
+/// Compute inter-particle forces using islands and the force matrix.
+fn compute_forces(
+    mut debug_info: ResMut<DebugDurations>,
+    mut forces: ResMut<ParticleForces>,
+    snapshots: Res<BodySnapshots>,
+    neighborhoods: Res<IslandNeighborhoods>,
+    grid: Res<IslandGrid>,
+    force_matrix: Res<ForceMatrix>,
+) {
+    if snapshots.0.is_empty() { return }
 
     let now = Instant::now();
-    for (_, mut positions, velocities) in query.contiguous_iter_mut().unwrap() {
-        for (i, (position, velocity)) in positions.iter_mut().zip(velocities).enumerate() {
-            let force = forces[i];
-            // degrade velocity before adding force
+
+    snapshots.0
+        .par_iter()
+        .enumerate()
+        .map(|(ix, body0)| {
+            let island_ix = get_island_ix(body0.position, &grid);
+            let mut total_force = DVec3::ZERO;
+            if let Some(neighborhood) = neighborhoods.0.get(island_ix) {
+                for &jx in neighborhood {
+                    if ix == jx { continue }
+                    total_force += get_force(body0, &snapshots.0[jx], &force_matrix);
+                }
+            }
+            total_force
+        })
+        .collect_into_vec(&mut forces.0);
+
+    debug_info.add("forces", now.elapsed());
+}
+
+/// Apply forces, drag, and velocity integration to body positions.
+fn apply_forces(
+    mut debug_info: ResMut<DebugDurations>,
+    mut query: Query<(&mut PointVelocity, &mut PointPosition)>,
+    forces: Res<ParticleForces>,
+    time: Res<Time<Virtual>>,
+) {
+    const DRAG_HALFLIFE: f64 = 1.0 / 0.043;
+
+    if forces.0.is_empty() { return }
+
+    let dt = time.delta_secs_f64();
+    if dt == 0.0 { return }
+
+    let now = Instant::now();
+
+    // DO NOT change these nested loop patterns, it is more performant than a single iter_mut!
+    for (mut velocities, positions) in query.contiguous_iter_mut().unwrap() {
+        for (i, (velocity, position)) in velocities.iter_mut().zip(positions).enumerate() {
+            let force = forces.0[i];
             **velocity *= 0.5f64.powf(DRAG_HALFLIFE * dt);
             **velocity += force * dt;
-
             **position += **velocity * dt;
         }
     }
 
     debug_info.add("stepping", now.elapsed());
-
 }
 
 fn translate_bodies(
     mut query: Query<(&mut Transform, &mut PointPosition)>,
 ) {
     for (mut transform, mut position) in &mut query {
-        position.0 = position.0.rem_euclid(DVec3::ONE);
-        transform.translation = translate(position.0);
+        **position = position.rem_euclid(DVec3::ONE);
+        transform.translation = translate(**position);
     }
-}
-
-#[derive(Resource)]
-pub struct ParticlePhysics {
-    forces: Vec<DVec3>,
-    islands: IslandManager,
-}
-
-impl Default for ParticlePhysics {
-    fn default() -> Self {
-        Self {
-            forces: Vec::default(),
-            islands: IslandManager::new(MAX_DIST),
-        }
-    }
-}
-
-impl ParticlePhysics {
-
-    pub fn get_forces(&mut self, bodies: &[BodySnapshot], force_matrix: &ForceMatrix, durations: &mut DebugDurations) -> &[DVec3] {
-        // bucket bodies, broad phase
-
-        self.islands.index_positions(&bodies, durations);
-
-        let now = Instant::now();
-
-        bodies
-            .par_iter()
-            .enumerate()
-            .map(|(ix, body0)| {
-                let mut total_force = DVec3::ZERO;
-                if let Some(neighborhood) = self.islands.get_neighboring_ixs(body0.position) {
-                    for &jx in neighborhood {
-                        if ix == jx { continue }
-                        total_force += get_force(body0, &bodies[jx], force_matrix);
-                    }
-                }
-                total_force
-            })
-            .collect_into_vec(&mut self.forces);
-
-        durations.add("forces", now.elapsed());
-
-        &self.forces
-    }
-
 }
 
 #[inline]
 fn get_force(body0: &BodySnapshot, body1: &BodySnapshot, forces: &ForceMatrix) -> DVec3 {
-    // shortest distance in wrapped toroidal space
     let min_pos = (body1.position - body0.position + 0.5).rem_euclid(DVec3::ONE) - 0.5;
     let dist_sqrd = min_pos.length_squared();
     if dist_sqrd > MAX_DIST_SQRD || dist_sqrd < 1e-30 {
@@ -196,8 +207,8 @@ fn get_force(body0: &BodySnapshot, body1: &BodySnapshot, forces: &ForceMatrix) -
 
     let dist = dist_sqrd.sqrt();
     let dist_recip = dist.recip();
-    let rel_dist = dist * MAX_DIST_RECIP; // normalized distance [0, 1]
-    let dir = min_pos * dist_recip; // unit direction
+    let rel_dist = dist * MAX_DIST_RECIP;
+    let dir = min_pos * dist_recip;
 
     let force = if rel_dist <= MIN_REL_DIST {
         rel_dist * MIN_DIST_RECIP - 1.0
