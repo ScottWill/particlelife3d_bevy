@@ -5,7 +5,9 @@ use rayon::prelude::*;
 use std::time::Instant;
 
 use crate::{next_state, debug::DebugDurations, traits::NextVariant, translate};
-use super::{bodies::PointBody, forces::{ForceMatrix, ForceMatrixPlugin}, islands::IslandManager};
+use super::bodies::{BodySnapshot, PointBody, PointColor, PointPosition, PointVelocity};
+use super::forces::{ForceMatrix, ForceMatrixPlugin};
+use super::islands::IslandManager;
 
 const MAX_DIST: f64 = 0.045; // The maximum distance that a particle can interact with another
 const MIN_REL_DIST: f64 = 1.0 / 3.0; // The minimum relative distance that two particles can interact with
@@ -47,10 +49,10 @@ impl Plugin for ParticlePhysicsPlugin {
 }
 
 fn step_bodies(
-    mut bodies: Local<Vec<PointBody>>,
+    mut bodies: Local<Vec<BodySnapshot>>,
     mut debug_info: ResMut<DebugDurations>,
     mut physics: ResMut<ParticlePhysics>,
-    mut query: Query<&mut PointBody>,
+    mut query: Query<(&PointColor, &mut PointPosition, &mut PointVelocity)>,
     mut next_state: ResMut<NextState<PhysicsRunState>>,
     force_matrix: Res<ForceMatrix>,
 ) {
@@ -66,10 +68,10 @@ fn step_bodies(
 }
 
 fn update_bodies(
-    mut bodies: Local<Vec<PointBody>>,
+    mut bodies: Local<Vec<BodySnapshot>>,
     mut debug_info: ResMut<DebugDurations>,
     mut physics: ResMut<ParticlePhysics>,
-    mut query: Query<&mut PointBody>,
+    mut query: Query<(&PointColor, &mut PointPosition, &mut PointVelocity)>,
     force_matrix: Res<ForceMatrix>,
     time: Res<Time<Virtual>>,
 ) {
@@ -84,36 +86,50 @@ fn update_bodies(
 }
 
 fn physics_step(
-    bodies: &mut Vec<PointBody>,
+    bodies: &mut Vec<BodySnapshot>,
     debug_info: &mut DebugDurations,
     physics: &mut ParticlePhysics,
-    query: &mut Query<&mut PointBody>,
+    query: &mut Query<(&PointColor, &mut PointPosition, &mut PointVelocity)>,
     force_matrix: &ForceMatrix,
     dt: f64,
 ) {
+    const DRAG_HALFLIFE: f64 = 1.0 / 0.043;
 
     bodies.clear();
 
-    for body in query.iter_mut() {
-        bodies.push(*body);
+    for (color, position, _) in query.iter() {
+        bodies.push(BodySnapshot {
+            color: color.0,
+            position: position.0,
+        });
     }
 
     if bodies.is_empty() { return }
 
     let forces = physics.get_forces(bodies.as_slice(), force_matrix, debug_info);
 
-    for (i, mut body) in query.iter_mut().enumerate() {
-        body.step(forces[i], dt);
+    let now = Instant::now();
+    for (_, mut positions, velocities) in query.contiguous_iter_mut().unwrap() {
+        for (i, (position, velocity)) in positions.iter_mut().zip(velocities).enumerate() {
+            let force = forces[i];
+            // degrade velocity before adding force
+            **velocity *= 0.5f64.powf(DRAG_HALFLIFE * dt);
+            **velocity += force * dt;
+
+            **position += **velocity * dt;
+        }
     }
+
+    debug_info.add("stepping", now.elapsed());
 
 }
 
 fn translate_bodies(
-    mut query: Query<(&mut Transform, &mut PointBody)>,
+    mut query: Query<(&mut Transform, &mut PointPosition)>,
 ) {
-    for (mut transform, mut body) in &mut query {
-        body.position = body.position.rem_euclid(DVec3::ONE);
-        transform.translation = translate(body.position);
+    for (mut transform, mut position) in &mut query {
+        position.0 = position.0.rem_euclid(DVec3::ONE);
+        transform.translation = translate(position.0);
     }
 }
 
@@ -134,7 +150,7 @@ impl Default for ParticlePhysics {
 
 impl ParticlePhysics {
 
-    pub fn get_forces(&mut self, bodies: &[PointBody], force_matrix: &ForceMatrix, durations: &mut DebugDurations) -> &[DVec3] {
+    pub fn get_forces(&mut self, bodies: &[BodySnapshot], force_matrix: &ForceMatrix, durations: &mut DebugDurations) -> &[DVec3] {
         // bucket bodies, broad phase
 
         self.islands.index_positions(&bodies, durations);
@@ -163,24 +179,27 @@ impl ParticlePhysics {
 
 }
 
-fn get_force(body0: &PointBody, body1: &PointBody, forces: &ForceMatrix) -> DVec3 {
+#[inline]
+fn get_force(body0: &BodySnapshot, body1: &BodySnapshot, forces: &ForceMatrix) -> DVec3 {
     // shortest distance in wrapped toroidal space
     let min_pos = (body1.position - body0.position + 0.5).rem_euclid(DVec3::ONE) - 0.5;
-    if min_pos.length_squared() > MAX_DIST_SQRD {
+    let dist_sqrd = min_pos.length_squared();
+    if dist_sqrd > MAX_DIST_SQRD || dist_sqrd < 1e-30 {
         return DVec3::ZERO;
     }
 
-    let pos = min_pos * MAX_DIST_RECIP;
-    let dist = pos.length();
+    let dist = dist_sqrd.sqrt();
+    let dist_recip = dist.recip();
+    let rel_dist = dist * MAX_DIST_RECIP; // normalized distance [0, 1]
+    let dir = min_pos * dist_recip; // unit direction
 
-    let force;
-    if dist <= MIN_REL_DIST {
-        force = dist * MIN_DIST_RECIP - 1.0;
+    let force = if rel_dist <= MIN_REL_DIST {
+        rel_dist * MIN_DIST_RECIP - 1.0
     } else {
         let f = forces[(body0.color, body1.color)];
         if f == 0.0 { return DVec3::ZERO }
-        force = f * (1.0 - (1.0 + MIN_REL_DIST - 2.0 * dist) * INV_MIN_DIST_RECIP);
+        f * (1.0 - (1.0 + MIN_REL_DIST - 2.0 * rel_dist) * INV_MIN_DIST_RECIP)
     };
 
-    force / dist * MAX_DIST * pos
+    dir * (force * MAX_DIST)
 }

@@ -5,39 +5,33 @@ use crate::camera::Position;
 #[derive(Clone, Copy, Component, Default, Deref, DerefMut)]
 pub struct PointBodyIndex(usize);
 
-#[derive(Clone, Copy, Component, Debug, Default)]
-#[require(PointBodyIndex)]
-pub struct PointBody {
-    pub color: usize,
-    pub position: DVec3,
-    pub velocity: DVec3,
-}
+#[derive(Clone, Copy, Component, Debug, Default, Deref, DerefMut)]
+pub struct PointColor(pub usize);
 
-impl Position for PointBody {
+#[derive(Clone, Copy, Component, Debug, Default, Deref, DerefMut)]
+pub struct PointPosition(pub DVec3);
+
+impl Position for PointPosition {
     fn position(&self) -> &DVec3 {
-        &self.position
+        &self.0
     }
 
     fn position_mut(&mut self) -> &mut DVec3 {
-        &mut self.position
+        &mut self.0
     }
 }
 
-impl PointBody {
+#[derive(Clone, Copy, Component, Debug, Default, Deref, DerefMut)]
+pub struct PointVelocity(pub DVec3);
 
-    const DRAG_HALFLIFE: f64 = 1.0 / 0.043;
+/// Marker component that requires all point body sub-components.
+#[derive(Clone, Copy, Component, Debug, Default)]
+#[require(PointBodyIndex, PointColor, PointPosition, PointVelocity)]
+pub struct PointBody;
 
-    pub fn new(color: usize, position: DVec3) -> Self {
-        Self { color, position, ..default() }
-    }
-
-    #[inline]
-    pub fn step(&mut self, force: DVec3, dt: f64) {
-        // degrade velocity before adding force
-        self.velocity *= 0.5f64.powf(Self::DRAG_HALFLIFE * dt);
-        self.velocity += force * dt;
-
-        self.position += self.velocity * dt;
-    }
-
+/// A snapshot of a single body's data, used for physics computation.
+#[derive(Clone, Copy, Debug)]
+pub struct BodySnapshot {
+    pub color: usize,
+    pub position: DVec3,
 }

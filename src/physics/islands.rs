@@ -5,7 +5,7 @@ use rayon::iter::{IntoParallelRefMutIterator as _, IndexedParallelIterator as _,
 
 use crate::debug::DebugDurations;
 
-use super::bodies::PointBody;
+use super::bodies::BodySnapshot;
 
 const NEIGHBORS: [[isize; 2]; 9] = [
     [-1, -1], [0, -1], [1, -1],
@@ -65,7 +65,7 @@ impl IslandManager {
     }
 
     // add each body's vec index into the appropriate island
-    pub fn index_positions(&mut self, bodies: &[PointBody], durations: &mut DebugDurations) {
+    pub fn index_positions(&mut self, bodies: &[BodySnapshot], durations: &mut DebugDurations) {
 
         let now = Instant::now();
 

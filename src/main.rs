@@ -11,7 +11,7 @@ use crate::config::BODIES;
 use crate::debug::DebugPlugin;
 use crate::palette::{Palette, PalettePlugin};
 use crate::physics::ParticlePhysicsPlugin;
-use crate::physics::PointBody;
+use crate::physics::{PointBody, PointColor, PointPosition};
 use crate::positioners::{PositionerType, get_position};
 use crate::traits::{Fullscreen as _, NextVariant, PrevVariant};
 
@@ -29,7 +29,7 @@ fn main() {
     App::new()
         .add_plugins((
             DefaultPlugins.set(WindowPlugin::fullscreen()),
-            CameraPlugin::<PointBody>::default(),
+            CameraPlugin::<PointPosition>::default(),
             DebugPlugin,
             PalettePlugin,
             ParticlePhysicsPlugin,
@@ -106,14 +106,6 @@ fn match_body_count(
     }
 }
 
-#[derive(Bundle)]
-struct BodyBundle {
-    body: PointBody,
-    material: MeshMaterial3d<StandardMaterial>,
-    mesh: Mesh3d,
-    transform: Transform,
-}
-
 fn build_batch(
     commands: &mut Commands,
     palette: &Palette,
@@ -125,13 +117,14 @@ fn build_batch(
     for _ in 0..count {
         let position = get_position(&mut rng, PositionerType::default());
         let color = palette.random();
-        let bundle = BodyBundle {
-            body: PointBody::new(color, position),
-            material: MeshMaterial3d(palette[color].clone()),
-            mesh: Mesh3d(mesh.clone()),
-            transform: Transform::from_translation(translate(position)),
-        };
-        batch.push(bundle);
+        batch.push((
+            PointBody,
+            PointColor(color),
+            PointPosition(position),
+            MeshMaterial3d(palette[color].clone()),
+            Mesh3d(mesh.clone()),
+            Transform::from_translation(translate(position)),
+        ));
     }
 
     commands.spawn_batch(batch);
