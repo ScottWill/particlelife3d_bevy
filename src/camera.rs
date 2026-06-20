@@ -98,7 +98,8 @@ fn setup_camera(
     commands.spawn((
         Camera3d::default(),
         MainCamera,
-        Transform::from_translation(Vec3::new(0.0, 48.0, 128.0)).looking_at(Vec3::ZERO, Vec3::Y),
+        Transform::from_translation(Vec3::new(0.0, 48.0, 128.0))
+            .looking_at(Vec3::ZERO, Vec3::Y),
     ));
 }
 
