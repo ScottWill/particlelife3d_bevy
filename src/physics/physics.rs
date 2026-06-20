@@ -46,9 +46,11 @@ impl Plugin for ParticlePhysicsPlugin {
         app.add_systems(Update, (
             next_state::<PhysicsRunState>.run_if(input_just_pressed(KeyCode::Enter)),
             step_bodies.run_if(input_pressed(KeyCode::Space)),
+        ));
+        app.add_systems(FixedUpdate, (
             update_bodies.run_if(in_state(PhysicsRunState::Running)),
         ));
-        app.add_systems(PostUpdate, translate_bodies);
+        app.add_systems(FixedPostUpdate, translate_bodies);
     }
 }
 
