@@ -4,8 +4,9 @@ use bevy::prelude::*;
 use rayon::prelude::*;
 use std::time::Instant;
 
+use crate::physics::bodies::BodyPlugin;
 use crate::{next_state, debug::DebugDurations, traits::NextVariant, translate};
-use super::bodies::{BodySnapshot, PointBody, PointColor, PointPosition, PointVelocity};
+use super::bodies::{BodySnapshot, PointColor, PointPosition, PointVelocity};
 use super::forces::{ForceMatrix, ForceMatrixPlugin};
 use super::islands::IslandManager;
 
@@ -36,7 +37,10 @@ pub struct ParticlePhysicsPlugin;
 
 impl Plugin for ParticlePhysicsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(ForceMatrixPlugin);
+        app.add_plugins((
+            BodyPlugin,
+            ForceMatrixPlugin,
+        ));
         app.init_state::<PhysicsRunState>();
         app.init_resource::<ParticlePhysics>();
         app.add_systems(Update, (

@@ -9,9 +9,9 @@ use rand::Rng as _;
 use crate::camera::CameraPlugin;
 use crate::config::BODIES;
 use crate::debug::DebugPlugin;
-use crate::palette::{Palette, PalettePlugin};
+use crate::palette::{PalettePlugin};
 use crate::physics::ParticlePhysicsPlugin;
-use crate::physics::{PointBody, PointColor, PointPosition};
+use crate::physics::{PointBody, PointPosition};
 use crate::positioners::{PositionerType, get_position};
 use crate::traits::{Fullscreen as _, NextVariant, PrevVariant};
 
@@ -78,7 +78,6 @@ fn reset_bodies(
 
 fn match_body_count(
     mut commands: Commands,
-    palette: Res<Palette>,
     query: Query<Entity, With<PointBody>>,
     mesh: Res<SphereHandle>,
 ) {
@@ -87,7 +86,6 @@ fn match_body_count(
     if BODIES > current_size {
         build_batch(
             &mut commands,
-            &palette,
             &mesh,
             BODIES - current_size,
         );
@@ -108,7 +106,6 @@ fn match_body_count(
 
 fn build_batch(
     commands: &mut Commands,
-    palette: &Palette,
     mesh: &Handle<Mesh>,
     count: usize,
 ) {
@@ -116,12 +113,8 @@ fn build_batch(
     let mut batch = Vec::with_capacity(count);
     for _ in 0..count {
         let position = get_position(&mut rng, PositionerType::default());
-        let color = palette.random();
         batch.push((
             PointBody,
-            PointColor(color),
-            PointPosition(position),
-            MeshMaterial3d(palette[color].clone()),
             Mesh3d(mesh.clone()),
             Transform::from_translation(translate(position)),
         ));

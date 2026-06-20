@@ -1,6 +1,6 @@
 use bevy::{math::DVec3, prelude::*};
 
-use crate::camera::Position;
+use crate::{camera::Position, palette::Palette};
 
 #[derive(Clone, Copy, Component, Default, Deref, DerefMut)]
 pub struct PointBodyIndex(usize);
@@ -26,7 +26,7 @@ pub struct PointVelocity(pub DVec3);
 
 /// Marker component that requires all point body sub-components.
 #[derive(Clone, Copy, Component, Debug, Default)]
-#[require(PointBodyIndex, PointColor, PointPosition, PointVelocity)]
+#[require(PointBodyIndex, PointPosition, PointVelocity)]
 pub struct PointBody;
 
 /// A snapshot of a single body's data, used for physics computation.
@@ -34,4 +34,31 @@ pub struct PointBody;
 pub struct BodySnapshot {
     pub color: usize,
     pub position: DVec3,
+}
+
+pub struct BodyPlugin;
+
+impl Plugin for BodyPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_observer(add_components);
+    }
+}
+
+fn add_components(
+    trigger: On<Add, PointBody>,
+    mut commands: Commands,
+    palette: Res<Palette>,
+    query: Query<&Transform, With<PointBody>>,
+) {
+    let mut commands = commands.entity(trigger.entity);
+
+    let color = palette.random();
+    commands.insert((
+        MeshMaterial3d(palette[color].clone()),
+        PointColor(color),
+    ));
+
+    if let Ok(transform) = query.get(trigger.entity) {
+        commands.insert(PointPosition(transform.translation.as_dvec3()));
+    }
 }
