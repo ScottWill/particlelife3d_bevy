@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use bevy::math::{DVec3, USizeVec3};
+use bevy::math::DVec3;
 use rayon::iter::{IntoParallelRefMutIterator as _, IndexedParallelIterator as _, ParallelIterator as _};
 
 use crate::debug::DebugDurations;
@@ -18,7 +18,6 @@ pub struct IslandManager {
     islands: Vec<Vec<usize>>, // islands and their per step computed body indicies
     neighbor_ixs: Vec<[usize; 27]>, // pre-cached neighbor indices
     neighbors: Vec<Vec<usize>>, // per-step computed bodies per island
-    scale: USizeVec3,
     side_f64: f64,
     side: usize,
 }
@@ -32,7 +31,6 @@ impl IslandManager {
             islands: vec![vec![]; size],
             neighbor_ixs: Vec::with_capacity(size),
             neighbors: vec![vec![]; size],
-            scale: USizeVec3::new(1, side, side * side),
             side_f64: side as f64,
             side,
         };
@@ -108,8 +106,11 @@ impl IslandManager {
 
     #[inline]
     fn get_local_island_ix(&self, pos: DVec3) -> usize {
-        let pos = (pos * self.side_f64).as_usizevec3();
-        (pos * self.scale).element_sum()
+        let max = self.side_f64 - 1.0;
+        let x = (pos.x * self.side_f64).clamp(0.0, max) as usize;
+        let y = (pos.y * self.side_f64).clamp(0.0, max) as usize;
+        let z = (pos.z * self.side_f64).clamp(0.0, max) as usize;
+        x + y * self.side + z * self.side * self.side
     }
 
 }
