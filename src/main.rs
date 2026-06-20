@@ -1,21 +1,23 @@
 use bevy::ecs::schedule::common_conditions::on_message;
 use bevy::input::common_conditions::{input_just_pressed, input_pressed};
+use bevy::math::DVec3;
 use bevy::prelude::*;
 use bevy::state::state::FreelyMutableState;
-use bevy_panorbit_camera::{PanOrbitCamera, PanOrbitCameraPlugin};
-use glam::DVec3;
+
 use rand::Rng as _;
 
+use crate::camera::CameraPlugin;
 use crate::config::BODIES;
 use crate::debug::DebugPlugin;
 use crate::palette::{Palette, PalettePlugin};
 use crate::physics::ParticlePhysicsPlugin;
 use crate::physics::PointBody;
 use crate::positioners::{PositionerType, get_position};
-use crate::traits::{Fullscreen as _, NextVariant, NoPan as _, PrevVariant};
+use crate::traits::{Fullscreen as _, NextVariant, PrevVariant};
 
 const SCALE: f64 = 128.0;
 
+mod camera;
 mod config;
 mod debug;
 mod palette;
@@ -27,22 +29,19 @@ fn main() {
     App::new()
         .add_plugins((
             DefaultPlugins.set(WindowPlugin::fullscreen()),
+            CameraPlugin::<PointBody>::default(),
             DebugPlugin,
             PalettePlugin,
-            PanOrbitCameraPlugin,
             ParticlePhysicsPlugin,
         ))
         .add_message::<UpdateBodies>()
         .add_systems(Startup, setup)
         .add_systems(Update, (
             match_body_count.run_if(on_message::<UpdateBodies>).after(reset_bodies),
-            reset_bodies.run_if(input_just_pressed(KeyCode::KeyR).and(input_pressed(KeyCode::ShiftLeft))),
-            pan_bodies::< 0,  0,  1>.run_if(input_pressed(KeyCode::KeyS)),
-            pan_bodies::< 0,  0, -1>.run_if(input_pressed(KeyCode::KeyW)),
-            pan_bodies::< 0,  1,  0>.run_if(input_pressed(KeyCode::KeyQ)),
-            pan_bodies::< 0, -1,  0>.run_if(input_pressed(KeyCode::KeyE)),
-            pan_bodies::< 1,  0,  0>.run_if(input_pressed(KeyCode::KeyD)),
-            pan_bodies::<-1,  0,  0>.run_if(input_pressed(KeyCode::KeyA)),
+            reset_bodies.run_if(
+                input_just_pressed(KeyCode::KeyR)
+                    .and_then(input_pressed(KeyCode::SuperLeft))
+            ),
         ))
         .run();
 }
@@ -62,30 +61,7 @@ fn setup(
 
     let mesh = meshes.add(Sphere::new(RADIUS));
     commands.insert_resource(SphereHandle(mesh));
-
-    commands.spawn((
-        Camera3d::default(),
-        PanOrbitCamera::no_pan(),
-        Transform::from_translation(Vec3::new(0.0, 48.0, 128.0)).looking_at(Vec3::ZERO, Vec3::Y)
-    ));
-
     messages.write(UpdateBodies);
-}
-
-fn pan_bodies<
-    const X: i8,
-    const Y: i8,
-    const Z: i8,
->(
-    mut bodies: Query<&mut PointBody>,
-    keys: Res<ButtonInput<KeyCode>>,
-    time: Res<Time>,
-) {
-    let factor = if keys.pressed(KeyCode::ShiftLeft) { 0.25 } else { 0.1 };
-    let offset = factor * time.delta_secs_f64() * DVec3::new(X as f64, Y as f64, Z as f64);
-    for mut body in &mut bodies {
-        body.position += offset;
-    }
 }
 
 fn reset_bodies(

@@ -1,10 +1,9 @@
 use bevy::input::common_conditions::{input_just_pressed, input_pressed};
+use bevy::math::DVec3;
 use bevy::prelude::*;
-use glam::DVec3;
 use rayon::prelude::*;
 use std::time::Instant;
 
-use crate::physics::bodies::PointBodyIndex;
 use crate::{next_state, debug::DebugDurations, traits::NextVariant, translate};
 use super::{bodies::PointBody, forces::{ForceMatrix, ForceMatrixPlugin}, islands::IslandManager};
 

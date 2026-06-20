@@ -1,4 +1,4 @@
-use glam::{DVec2, DVec3};
+use bevy::math::{DVec2, DVec3};
 use rand::{Rng as _, rngs::ThreadRng};
 use std::f64::consts::TAU;
 

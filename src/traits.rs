@@ -1,10 +1,9 @@
 use bevy::{
-    dev_tools::fps_overlay::{FpsOverlayConfig, FpsOverlayPlugin, FrameTimeGraphConfig},
+    dev_tools::fps_overlay::{FpsOverlayConfig, FpsOverlayPlugin},
     prelude::*,
     window::{CursorGrabMode, CursorOptions, WindowMode},
 };
-use bevy_panorbit_camera::PanOrbitCamera;
-use glam::DVec3;
+use bevy::math::DVec3;
 use rand::Rng as _;
 use std::f64::consts::TAU;
 
@@ -68,17 +67,4 @@ pub trait NextVariant {
 
 pub trait PrevVariant {
     fn prev(&self) -> Self;
-}
-
-pub trait NoPan {
-    fn no_pan() -> Self;
-}
-
-impl NoPan for PanOrbitCamera {
-    fn no_pan() -> Self {
-        Self {
-            pan_sensitivity: 0.0,
-            ..default()
-        }
-    }
 }

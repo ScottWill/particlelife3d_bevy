@@ -1,5 +1,9 @@
-use bevy::prelude::*;
-use glam::DVec3;
+use bevy::{math::DVec3, prelude::*};
+
+use crate::camera::Position;
+
+#[derive(Clone, Copy, Component, Default, Deref, DerefMut)]
+pub struct PointBodyIndex(usize);
 
 #[derive(Clone, Copy, Component, Debug, Default)]
 #[require(PointBodyIndex)]
@@ -9,8 +13,15 @@ pub struct PointBody {
     pub velocity: DVec3,
 }
 
-#[derive(Clone, Copy, Component, Default, Deref, DerefMut)]
-pub struct PointBodyIndex(usize);
+impl Position for PointBody {
+    fn position(&self) -> &DVec3 {
+        &self.position
+    }
+
+    fn position_mut(&mut self) -> &mut DVec3 {
+        &mut self.position
+    }
+}
 
 impl PointBody {
 

@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use glam::{DVec3, USizeVec3};
+use bevy::math::{DVec3, USizeVec3};
 use rayon::iter::{IntoParallelIterator as _, ParallelIterator as _};
 
 use crate::debug::DebugDurations;
