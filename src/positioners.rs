@@ -1,5 +1,5 @@
 use bevy::math::{DVec2, DVec3};
-use rand::{Rng as _, rngs::ThreadRng};
+use rand::{RngExt as _, rngs::ThreadRng};
 use std::f64::consts::TAU;
 
 use crate::traits::RandVec3 as _;
@@ -20,6 +20,7 @@ pub fn get_position(rng: &mut ThreadRng, pos_type: PositionerType) -> DVec3 {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[allow(dead_code)]
 pub enum PositionerType {
     BigBang,
     Sphere,

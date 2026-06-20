@@ -4,7 +4,7 @@ use bevy::{
     window::{CursorGrabMode, CursorOptions, WindowMode},
 };
 use bevy::math::DVec3;
-use rand::Rng as _;
+use rand::RngExt as _;
 use std::f64::consts::TAU;
 
 pub trait Fullscreen {

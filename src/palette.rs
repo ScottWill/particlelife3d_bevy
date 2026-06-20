@@ -1,7 +1,6 @@
 use bevy::prelude::*;
 use rand::random;
 use crate::config::COLORS;
-// use crate::physics::PointBody;
 
 pub struct PalettePlugin;
 

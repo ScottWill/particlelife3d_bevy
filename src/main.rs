@@ -3,8 +3,7 @@ use bevy::input::common_conditions::{input_just_pressed, input_pressed};
 use bevy::math::DVec3;
 use bevy::prelude::*;
 use bevy::state::state::FreelyMutableState;
-
-use rand::Rng as _;
+use rand::RngExt as _;
 
 use crate::camera::CameraPlugin;
 use crate::config::BODIES;
