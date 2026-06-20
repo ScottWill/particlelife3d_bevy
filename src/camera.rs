@@ -80,9 +80,7 @@ fn pan_bodies<
 )
 {
     let (forward, right) = looking_axis(camera);
-    // Build the offset: X maps to camera-right, Z maps to camera-forward, Y stays world-up
-    let input = DVec3::new(X as f64, Y as f64, Z as f64);
-    let offset_dir = right * input.x + DVec3::Y * input.y + forward * input.z;
+    let offset_dir = right * X as f64 + DVec3::Y * Y as f64 + forward * Z as f64;
     let factor = if keys.pressed(KeyCode::ShiftLeft) { 0.25 } else { 0.1 };
     let offset = factor * time.delta_secs_f64() * offset_dir;
     for mut body in &mut query {
