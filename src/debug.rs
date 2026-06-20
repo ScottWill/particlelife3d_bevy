@@ -29,7 +29,8 @@ impl Plugin for DebugPlugin {
         ));
         app.add_systems(PostUpdate,
             debug_ui.run_if(
-                in_state(UiState::Visible).and(on_timer(Duration::from_millis(100)))
+                on_timer(Duration::from_millis(100))
+                    .and_then(in_state(UiState::Visible))
             )
         );
     }
@@ -131,17 +132,44 @@ fn debug_ui(
     *writer.text(*ui_text, 3) = debug_info.to_string();
 }
 
-#[derive(Default, Deref, DerefMut, Resource)]
-pub struct DebugDurations(HashMap<String,VecDeque<f32>>);
+const MAX_ITEMS: usize = 64;
+
+#[derive(Default)]
+struct AvgDuration {
+    total: f32,
+    durations: VecDeque<f32>,
+}
+
+impl Display for AvgDuration {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+        write!(f, "{:.3}ms", self.avg())
+    }
+}
+
+impl AvgDuration {
+    fn add(&mut self, duration: Duration) {
+        if self.durations.len() == MAX_ITEMS {
+            let old_ms = self.durations.pop_back().unwrap();
+            self.total -= old_ms;
+        }
+        let ms = 1000.0 * duration.as_secs_f32();
+        self.durations.push_front(ms);
+        self.total += ms;
+    }
+
+    fn avg(&self) -> f32 {
+        self.total / MAX_ITEMS as f32
+    }
+}
+
+#[derive(Default, Resource)]
+pub struct DebugDurations(HashMap<String,AvgDuration>);
 
 impl Display for DebugDurations {
     fn fmt(&self, f: &mut Formatter) -> Result {
-        let result = self
+        let result = self.0
             .iter()
-            .map(|(k, v)| {
-                let avg = avg_duration(v);
-                format!("{k}: {avg:.3}ms")
-            })
+            .map(|(k, v)| format!("{k}: {v}"))
             .collect::<Vec<_>>()
             .join("\n");
         write!(f, "{result}")
@@ -149,26 +177,13 @@ impl Display for DebugDurations {
 }
 
 impl DebugDurations {
-    const MAX_ITEMS: usize = 64;
-
     pub fn add(&mut self, name: &str, duration: Duration) {
-        let ms = 1000.0 * duration.as_secs_f32();
-        if let Some(vdq) = self.get_mut(name) {
-            vdq.truncate(Self::MAX_ITEMS - 1);
-            vdq.push_front(ms);
+        if let Some(avg) = self.0.get_mut(name) {
+            avg.add(duration);
         } else {
-            let mut value = VecDeque::with_capacity(Self::MAX_ITEMS + 1);
-            value.push_front(ms);
-            self.insert(name.to_owned(), value);
+            let mut value = AvgDuration::default();
+            value.add(duration);
+            self.0.insert(name.to_owned(), value);
         }
     }
-}
-
-#[inline]
-fn avg_duration(vdq: &VecDeque<f32>) -> f32 {
-    if vdq.len() == 0 { return 0.0 }
-    if vdq.len() == 1 { return vdq[0] }
-
-    let total: f32 = vdq.iter().sum();
-    total / vdq.len() as f32
 }
