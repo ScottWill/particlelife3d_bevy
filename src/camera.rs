@@ -68,7 +68,7 @@ pub trait Position {
 }
 
 fn pan_bodies<
-    C,
+    C: Component<Mutability = Mutable> + Position,
     const X: i8,
     const Y: i8,
     const Z: i8,
@@ -78,8 +78,6 @@ fn pan_bodies<
     keys: Res<ButtonInput<KeyCode>>,
     time: Res<Time>,
 )
-where
-    C: Component<Mutability = Mutable> + Position
 {
     let (forward, right) = looking_axis(camera);
     // Build the offset: X maps to camera-right, Z maps to camera-forward, Y stays world-up
