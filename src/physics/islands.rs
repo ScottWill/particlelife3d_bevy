@@ -1,7 +1,7 @@
 use std::time::Instant;
 
 use bevy::math::{DVec3, USizeVec3};
-use rayon::iter::{IntoParallelIterator as _, ParallelIterator as _};
+use rayon::iter::{IntoParallelRefMutIterator as _, IndexedParallelIterator as _, ParallelIterator as _};
 
 use crate::debug::DebugDurations;
 
@@ -86,18 +86,15 @@ impl IslandManager {
         }
 
         // for each island, find all body indexes for its local neighborhood
-        self.neighbors = (0..self.neighbor_ixs.len())
-            .into_par_iter()
-            .map(|i| {
-                let mut ixs = Vec::new();
-                if let Some(nixs) = self.neighbor_ixs.get(i) {
-                    for nix in nixs {
-                        ixs.extend_from_slice(&self.islands[*nix]);
-                    }
+        self.neighbors
+            .par_iter_mut()
+            .enumerate()
+            .for_each(|(i, neighbors)| {
+                neighbors.clear();
+                for nix in &self.neighbor_ixs[i] {
+                    neighbors.extend_from_slice(&self.islands[*nix]);
                 }
-                ixs
-            })
-            .collect::<Vec<_>>();
+            });
 
         durations.add("islands", now.elapsed());
 
