@@ -10,6 +10,7 @@ use std::{fmt::Display, time::Duration};
 
 use crate::{SCALE, next_state};
 use crate::physics::forces::ForceMatrix;
+use crate::positioners::CurrentPositioner;
 use crate::traits::{FpsOverlay as _, NextVariant};
 
 #[derive(Component)]
@@ -90,6 +91,12 @@ fn setup_ui(
                     text_font.clone(),
                     text_shadow,
                 ),
+                (
+                    TextSpan::default(),
+                    text_color,
+                    text_font.clone(),
+                    text_shadow,
+                ),
             ]
         )],
     ));
@@ -126,10 +133,12 @@ fn debug_ui(
     mut writer: TextUiWriter,
     debug_info: Res<DebugDurations>,
     forces: Res<ForceMatrix>,
+    positioner: Res<CurrentPositioner>,
     ui_text: Single<Entity, With<DebugText>>,
 ) {
     *writer.text(*ui_text, 2) = forces.to_string();
-    *writer.text(*ui_text, 3) = debug_info.to_string();
+    *writer.text(*ui_text, 3) = format!("Positioner: {}\n", *positioner);
+    *writer.text(*ui_text, 4) = debug_info.to_string();
 }
 
 const MAX_ITEMS: usize = 64;

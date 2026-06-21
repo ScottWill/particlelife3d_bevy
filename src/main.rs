@@ -11,7 +11,7 @@ use crate::debug::DebugPlugin;
 use crate::palette::{PalettePlugin};
 use crate::physics::ParticlePhysicsPlugin;
 use crate::physics::{PointBody, PointPosition};
-use crate::positioners::{PositionerType, get_position};
+use crate::positioners::{CurrentPositioner, PositionerPlugin, get_position};
 use crate::traits::{Fullscreen as _, NextVariant, PrevVariant};
 
 const SCALE: f64 = 128.0;
@@ -32,6 +32,7 @@ fn main() {
             DebugPlugin,
             PalettePlugin,
             ParticlePhysicsPlugin,
+            PositionerPlugin,
         ))
         .add_message::<UpdateBodies>()
         .add_systems(Startup, setup)
@@ -39,7 +40,7 @@ fn main() {
             match_body_count.run_if(on_message::<UpdateBodies>).after(reset_bodies),
             reset_bodies.run_if(
                 input_just_pressed(KeyCode::KeyR)
-                    .and_then(input_pressed(KeyCode::SuperLeft))
+                        .and_then(input_pressed(KeyCode::SuperLeft))
             ),
         ))
         .run();
@@ -79,6 +80,7 @@ fn match_body_count(
     mut commands: Commands,
     query: Query<Entity, With<PointBody>>,
     mesh: Res<SphereHandle>,
+    positioner: Res<CurrentPositioner>,
 ) {
     let mut current_size = query.count();
 
@@ -87,6 +89,7 @@ fn match_body_count(
             &mut commands,
             &mesh,
             BODIES - current_size,
+            positioner.0,
         );
         return
     }
@@ -107,11 +110,12 @@ fn build_batch(
     commands: &mut Commands,
     mesh: &Handle<Mesh>,
     count: usize,
+    pos_type: crate::positioners::PositionerType,
 ) {
     let mut rng = rand::rng();
     let mut batch = Vec::with_capacity(count);
     for _ in 0..count {
-        let position = get_position(&mut rng, PositionerType::default());
+        let position = get_position(&mut rng, pos_type);
         batch.push((
             PointBody,
             Mesh3d(mesh.clone()),
