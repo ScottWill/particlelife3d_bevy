@@ -65,6 +65,9 @@ impl Plugin for ParticlePhysicsPlugin {
         app.init_resource::<ParticleForces>();
         app.init_resource::<StepOnce>();
 
+        // Fixed physics timestep at 1/240s
+        // app.insert_resource(Time::<Fixed>::from_hz(240.0));
+
         app.add_systems(Update, (
             next_state::<PhysicsRunState>.run_if(input_just_pressed(KeyCode::Enter)),
             trigger_step.run_if(input_pressed(KeyCode::Space)),
@@ -164,7 +167,7 @@ fn apply_forces(
     mut debug_info: ResMut<DebugDurations>,
     mut query: Query<(&mut PointVelocity, &mut PointPosition)>,
     forces: Res<ParticleForces>,
-    time: Res<Time<Virtual>>,
+    time: Res<Time>,
 ) {
     const DRAG_HALFLIFE: f64 = 1.0 / 0.043;
 
