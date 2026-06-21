@@ -1,6 +1,6 @@
 use bevy::input::common_conditions::input_just_pressed;
 use bevy::prelude::*;
-use rand::random;
+use rand::RngExt;
 use crate::config::COLORS;
 use crate::physics::forces::ForceMatrix;
 use crate::physics::{PointBody, PointColor};
@@ -52,8 +52,9 @@ fn reset_palette<
     *forces = ForceMatrix::new(count, matrix_type);
 
     // Randomly recolor all point bodies
+    let mut rng  = rand::rng();
     for (mut mat_handle, mut point_color) in query.iter_mut() {
-        let color = palette.random();
+        let color = rng.random_range(0..count);
         point_color.0 = color;
         **mat_handle = palette[color].clone();
     }
@@ -83,31 +84,7 @@ impl Palette {
         }
     }
 
-    pub fn random(&self) -> usize {
-        random::<u64>() as usize % self.size
+    pub fn size(&self) -> usize {
+        self.size
     }
 }
-
-// pub fn update_palette(
-//     mut materials: ResMut<Assets<StandardMaterial>>,
-//     mut palette: ResMut<Palette>,
-//     mut query: Query<(&mut MeshMaterial3d<StandardMaterial>, &mut PointBody)>,
-// ) {
-//     if COLORS != palette.size {
-//         // re-init palette
-//         *palette = Palette::new(&mut materials, COLORS);
-//         // reassign colors
-//         for (mut hndl, mut body) in query.iter_mut() {
-//             match body.color.cmp(&COLORS) {
-//                 std::cmp::Ordering::Less => {
-//                     **hndl = palette.get(body.color).clone();
-//                 },
-//                 _ => {
-//                     let color = palette.random();
-//                     body.color = color;
-//                     **hndl = palette.get(color).clone();
-//                 },
-//             }
-//         }
-//     }
-// }

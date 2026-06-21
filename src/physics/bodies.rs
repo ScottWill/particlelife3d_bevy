@@ -1,4 +1,5 @@
 use bevy::{math::DVec3, prelude::*};
+use rand::random_range;
 
 use crate::{camera::Position, palette::Palette};
 
@@ -52,7 +53,7 @@ fn add_components(
 ) {
     let mut commands = commands.entity(trigger.entity);
 
-    let color = palette.random();
+    let color = random_range(0..palette.size());
     commands.insert((
         MeshMaterial3d(palette[color].clone()),
         PointColor(color),
