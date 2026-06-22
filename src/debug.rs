@@ -21,7 +21,7 @@ pub struct DebugPlugin;
 impl Plugin for DebugPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(FpsOverlayPlugin::overlay());
-        app.init_resource::<DebugDurations>();
+        app.insert_resource(DebugDurations::with_order(&["islands", "forces", "stepping"]));
         app.init_state::<UiState>();
         app.add_systems(Startup, setup_ui);
         app.add_systems(Update, (
@@ -172,27 +172,45 @@ impl AvgDuration {
 }
 
 #[derive(Default, Resource)]
-pub struct DebugDurations(HashMap<String,AvgDuration>);
+pub struct DebugDurations {
+    durations: HashMap<String,AvgDuration>,
+    order: Option<Vec<&'static str>>,
+}
 
 impl Display for DebugDurations {
     fn fmt(&self, f: &mut Formatter) -> Result {
-        let result = self.0
-            .iter()
-            .map(|(k, v)| format!("{k}: {v}"))
-            .collect::<Vec<_>>()
-            .join("\n");
-        write!(f, "{result}")
+        let mut result = Vec::with_capacity(self.durations.len());
+        if let Some(order) = &self.order {
+            for name in order {
+                if let Some(duration) = self.durations.get(*name) {
+                    result.push(format!("{name}: {duration}"));
+                }
+            }
+        } else {
+            result = self.durations
+                .iter()
+                .map(|(k, v)| format!("{k}: {v}"))
+                .collect::<Vec<_>>();
+        }
+        write!(f, "{}", result.join("\n"))
     }
 }
 
 impl DebugDurations {
+    pub fn with_order(order: &[&'static str]) -> Self {
+        Self {
+            order: Some(order.to_owned()),
+            ..Default::default()
+        }
+    }
+
     pub fn add(&mut self, name: &str, duration: Duration) {
-        if let Some(avg) = self.0.get_mut(name) {
+        if let Some(avg) = self.durations.get_mut(name) {
             avg.add(duration);
         } else {
             let mut value = AvgDuration::default();
             value.add(duration);
-            self.0.insert(name.to_owned(), value);
+            self.durations.insert(name.to_owned(), value);
         }
     }
 }
