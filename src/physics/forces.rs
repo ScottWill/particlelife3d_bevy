@@ -9,6 +9,8 @@ pub struct ForceMatrixPlugin;
 impl Plugin for ForceMatrixPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(ForceMatrix::new(COLORS, ForceMatrixType::default()));
+        app.init_resource::<SavedForceMatrix>();
+        app.init_resource::<F9HoldTimer>();
         app.add_systems(Update, (
             next_force.run_if(input_just_pressed(KeyCode::BracketRight)),
             prev_force.run_if(input_just_pressed(KeyCode::BracketLeft)),
@@ -17,7 +19,60 @@ impl Plugin for ForceMatrixPlugin {
             shift_right.run_if(input_just_pressed(KeyCode::ArrowUp)),
             shift_down.run_if(input_just_pressed(KeyCode::ArrowLeft)),
             shift_up.run_if(input_just_pressed(KeyCode::ArrowRight)),
+            save_forces.run_if(input_just_pressed(KeyCode::F4)),
+            load_forces_on_hold,
         ));
+    }
+}
+
+#[derive(Resource, Default)]
+struct SavedForceMatrix(Option<ForceMatrix>);
+
+#[derive(Resource)]
+struct F9HoldTimer {
+    timer: Timer,
+    active: bool,
+}
+
+impl Default for F9HoldTimer {
+    fn default() -> Self {
+        Self {
+            timer: Timer::from_seconds(1.0, TimerMode::Once),
+            active: false,
+        }
+    }
+}
+
+fn save_forces(
+    forces: Res<ForceMatrix>,
+    mut saved: ResMut<SavedForceMatrix>,
+) {
+    saved.0 = Some(forces.clone());
+}
+
+fn load_forces_on_hold(
+    keys: Res<ButtonInput<KeyCode>>,
+    time: Res<Time>,
+    mut hold: ResMut<F9HoldTimer>,
+    mut forces: ResMut<ForceMatrix>,
+    saved: Res<SavedForceMatrix>,
+) {
+    if keys.pressed(KeyCode::F9) {
+        hold.timer.tick(time.delta());
+        if hold.timer.just_finished() {
+            if let Some(ref saved_matrix) = saved.0 {
+                *forces = saved_matrix.clone();
+            }
+        }
+    } else {
+        if hold.active || hold.timer.elapsed_secs() > 0.0 {
+            hold.timer.reset();
+        }
+        hold.active = false;
+    }
+
+    if keys.just_pressed(KeyCode::F9) {
+        hold.active = true;
     }
 }
 
