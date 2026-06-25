@@ -5,9 +5,9 @@ use bevy::prelude::*;
 use rayon::iter::{IndexedParallelIterator as _, IntoParallelRefMutIterator as _, ParallelIterator as _};
 
 use crate::debug::DebugDurations;
-
 use super::bodies::BodySnapshot;
 
+const MAX_NEIGHBORS: usize = 256;
 const NEIGHBORS: [[isize; 2]; 9] = [
     [-1, -1], [0, -1], [1, -1],
     [-1,  0], [0,  0], [1,  0],
@@ -118,6 +118,8 @@ pub fn assign_islands(
 }
 
 /// System 3: Build per-island neighborhoods from neighbor indices (parallel).
+/// Caps each neighborhood at MAX_NEIGHBORS to avoid building huge lists that
+/// the force computation would discard anyway.
 pub fn build_neighborhoods(
     mut debug_info: ResMut<DebugDurations>,
     mut neighborhoods: ResMut<IslandNeighborhoods>,
@@ -132,7 +134,11 @@ pub fn build_neighborhoods(
         .for_each(|(i, neighbors)| {
             neighbors.clear();
             for nix in &neighbor_ixs.0[i] {
-                neighbors.extend_from_slice(&islands.0[*nix]);
+                let island = &islands.0[*nix];
+                let remaining = MAX_NEIGHBORS.saturating_sub(neighbors.len());
+                if remaining == 0 { break }
+                let take = island.len().min(remaining);
+                neighbors.extend_from_slice(&island[..take]);
             }
         });
 
