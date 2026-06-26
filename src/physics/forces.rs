@@ -20,6 +20,8 @@ impl Plugin for ForceMatrixPlugin {
             shift_down.run_if(input_just_pressed(KeyCode::ArrowLeft)),
             shift_up.run_if(input_just_pressed(KeyCode::ArrowRight)),
             save_forces.run_if(input_just_pressed(KeyCode::F4)),
+            mirror.run_if(input_just_pressed(KeyCode::KeyM)),
+            symmetry.run_if(input_just_pressed(KeyCode::KeyX)),
             load_forces_on_hold,
         ));
     }
@@ -41,6 +43,18 @@ impl Default for F9HoldTimer {
             active: false,
         }
     }
+}
+
+fn symmetry(
+    mut forces: ResMut<ForceMatrix>,
+) {
+    forces.make_symmetrical();
+}
+
+fn mirror(
+    mut forces: ResMut<ForceMatrix>,
+) {
+    forces.make_mirror();
 }
 
 fn save_forces(
@@ -250,6 +264,35 @@ impl ForceMatrix {
             .collect::<Vec<_>>();
 
         Self { data, color_count, matrix_type }
+    }
+
+    fn make_symmetrical(&mut self) {
+        // Build a symmetric Toeplitz matrix from the first row.
+        // Value at (i, j) = first_row[min(|i-j|, w - |i-j|)]
+        let w = self.color_count;
+        let first_row: Vec<f64> = self.data[..w].to_vec();
+
+        for i in 0..w {
+            for j in 0..w {
+                let diff = if i > j { i - j } else { j - i };
+                let dist = diff.min(w - diff);
+                let ix = self.data_ix(j, i);
+                self.data[ix] = first_row[dist];
+            }
+        }
+    }
+
+    fn make_mirror(&mut self) {
+        // Mirror across the diagonal so matrix[i][j] == matrix[j][i].
+        // Copies the upper triangle to the lower triangle.
+        let w = self.color_count;
+        for i in 0..w {
+            for j in (i + 1)..w {
+                let upper = self.data_ix(j, i);
+                let lower = self.data_ix(i, j);
+                self.data[lower] = self.data[upper];
+            }
+        }
     }
 
     // fn copy_to_clipboard(&self) {
