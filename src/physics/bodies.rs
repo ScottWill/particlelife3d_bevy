@@ -49,17 +49,10 @@ fn add_components(
     trigger: On<Add, PointBody>,
     mut commands: Commands,
     palette: Res<Palette>,
-    query: Query<&Transform, With<PointBody>>,
 ) {
-    let mut commands = commands.entity(trigger.entity);
-
     let color = random_range(0..palette.size());
-    commands.insert((
+    commands.entity(trigger.entity).insert((
         MeshMaterial3d(palette[color].clone()),
         PointColor(color),
     ));
-
-    if let Ok(transform) = query.get(trigger.entity) {
-        commands.insert(PointPosition(transform.translation.as_dvec3()));
-    }
 }

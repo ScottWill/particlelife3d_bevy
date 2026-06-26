@@ -40,7 +40,7 @@ fn main() {
             match_body_count.run_if(on_message::<UpdateBodies>).after(reset_bodies),
             reset_bodies.run_if(
                 input_just_pressed(KeyCode::KeyR)
-                        .and_then(input_pressed(KeyCode::SuperLeft))
+                    .and_then(input_pressed(KeyCode::SuperLeft))
             ),
         ))
         .run();
@@ -118,6 +118,7 @@ fn build_batch(
         let position = get_position(&mut rng, pos_type);
         batch.push((
             PointBody,
+            PointPosition(position),
             Mesh3d(mesh.clone()),
             Transform::from_translation(translate(position)),
         ));

@@ -7,7 +7,6 @@ use rayon::iter::{IndexedParallelIterator as _, IntoParallelRefMutIterator as _,
 use crate::debug::DebugDurations;
 use super::bodies::BodySnapshot;
 
-const MAX_NEIGHBORS: usize = 256;
 const NEIGHBORS: [[isize; 2]; 9] = [
     [-1, -1], [0, -1], [1, -1],
     [-1,  0], [0,  0], [1,  0],
@@ -76,7 +75,7 @@ fn compute_neighbor_ixs(side: usize, size: usize) -> Vec<[usize; 27]> {
         let y = i % (s * s) / s;
         let z = i / (s * s);
 
-        let mut neighborhood = [0usize; 27];
+        let mut neighborhood = [0; 27];
         let mut idx = 0;
         for m in -1..=1 {
             for n in &NEIGHBORS {
@@ -106,8 +105,8 @@ pub fn clear_islands(
 /// System 2: Assign each body to its island cell based on position.
 pub fn assign_islands(
     mut islands: ResMut<Islands>,
-    snapshots: Res<BodySnapshots>,
     grid: Res<IslandGrid>,
+    snapshots: Res<BodySnapshots>,
 ) {
     for (bx, body) in snapshots.0.iter().enumerate() {
         let ix = get_island_ix(body.position, &grid);
@@ -115,11 +114,13 @@ pub fn assign_islands(
             island.push(bx);
         }
     }
+
+    for island in &mut islands.0 {
+        island.shrink_to(island.len() * 3);
+    }
 }
 
 /// System 3: Build per-island neighborhoods from neighbor indices (parallel).
-/// Caps each neighborhood at MAX_NEIGHBORS to avoid building huge lists that
-/// the force computation would discard anyway.
 pub fn build_neighborhoods(
     mut debug_info: ResMut<DebugDurations>,
     mut neighborhoods: ResMut<IslandNeighborhoods>,
@@ -135,10 +136,7 @@ pub fn build_neighborhoods(
             neighbors.clear();
             for nix in &neighbor_ixs.0[i] {
                 let island = &islands.0[*nix];
-                let remaining = MAX_NEIGHBORS.saturating_sub(neighbors.len());
-                if remaining == 0 { break }
-                let take = island.len().min(remaining);
-                neighbors.extend_from_slice(&island[..take]);
+                neighbors.extend_from_slice(&island);
             }
         });
 

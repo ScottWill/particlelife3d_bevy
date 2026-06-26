@@ -3,6 +3,7 @@ use bevy::math::DVec3;
 use bevy::prelude::*;
 use rayon::prelude::*;
 use std::time::Instant;
+use std::ops::AddAssign;
 
 use crate::physics::bodies::BodyPlugin;
 use crate::{next_state, debug::DebugDurations, traits::NextVariant, translate};
@@ -20,6 +21,13 @@ const MAX_DIST_SQRD: f64 = MAX_DIST * MAX_DIST;
 const MIN_DIST_RECIP: f64 = 1.0 / MIN_REL_DIST;
 const INV_MIN_DIST_RECIP: f64 = 1.0 / (1.0 - MIN_REL_DIST);
 
+/// Density above this threshold starts attenuating attractive forces.
+const DENSITY_LIMIT: f64 = 12.0;
+/// Density contribution weight for same-color neighbors.
+const DENSITY_SAME_COLOR: f64 = 1.0;
+/// Density contribution weight for different-color neighbors.
+const DENSITY_DIFF_COLOR: f64 = 0.5;
+
 #[derive(Debug, Default, Clone, Copy, Eq, Hash, PartialEq, States)]
 enum PhysicsRunState {
     Running,
@@ -36,9 +44,29 @@ impl NextVariant for PhysicsRunState {
     }
 }
 
-/// Holds computed forces per body for the current physics tick.
+#[derive(Default)]
+struct ParticleComputation {
+    density: f64,
+    force: DVec3,
+}
+
+impl AddAssign for ParticleComputation {
+    fn add_assign(&mut self, rhs: Self) {
+        self.density += rhs.density;
+        self.force += rhs.force;
+    }
+}
+
+impl ParticleComputation {
+    const ZERO: Self = Self {
+        density: 0.0,
+        force: DVec3::ZERO,
+    };
+}
+
+/// Holds computed forces and densities per body for the current physics tick.
 #[derive(Default, Resource)]
-struct ParticleForces(Vec<DVec3>);
+struct ParticleComputations(Vec<ParticleComputation>);
 
 /// When set, the physics pipeline runs once then returns to Paused.
 #[derive(Default, Resource)]
@@ -62,7 +90,7 @@ impl Plugin for ParticlePhysicsPlugin {
             IslandsPlugin,
         ));
         app.init_state::<PhysicsRunState>();
-        app.init_resource::<ParticleForces>();
+        app.init_resource::<ParticleComputations>();
         app.init_resource::<StepOnce>();
 
         // Fixed physics timestep at 1/240s
@@ -132,32 +160,44 @@ fn snapshot_bodies(
 
 /// Compute inter-particle forces using islands and the force matrix.
 fn compute_forces(
+    mut computations: ResMut<ParticleComputations>,
     mut debug_info: ResMut<DebugDurations>,
-    mut forces: ResMut<ParticleForces>,
-    snapshots: Res<BodySnapshots>,
-    neighborhoods: Res<IslandNeighborhoods>,
-    grid: Res<IslandGrid>,
     force_matrix: Res<ForceMatrix>,
+    grid: Res<IslandGrid>,
+    neighborhoods: Res<IslandNeighborhoods>,
+    snapshots: Res<BodySnapshots>,
 ) {
     if snapshots.0.is_empty() { return }
 
     let now = Instant::now();
 
+    // Snapshot previous-tick densities so we can write into computations without aliasing.
+    let prev_densities = computations.0
+        .iter()
+        .map(|c| c.density)
+        .collect::<Vec<_>>();
+
     snapshots.0
         .par_iter()
         .enumerate()
         .map(|(ix, body0)| {
+            let density = prev_densities.get(ix).copied().unwrap_or_default();
+            let density_factor = 1.0 - (density - DENSITY_LIMIT).clamp(0.0, 1.0);
+
             let island_ix = get_island_ix(body0.position, &grid);
-            let mut total_force = DVec3::ZERO;
+            // let mut total_force = DVec3::ZERO;
+            // let mut total_density = 0.0;
+            let mut total_computation = ParticleComputation::default();
+
             if let Some(neighborhood) = neighborhoods.0.get(island_ix) {
                 for &jx in neighborhood {
                     if ix == jx { continue }
-                    total_force += get_force(body0, &snapshots.0[jx], &force_matrix);
+                    total_computation += get_computation(body0, &snapshots.0[jx], &force_matrix, density_factor);
                 }
             }
-            total_force
+            total_computation
         })
-        .collect_into_vec(&mut forces.0);
+        .collect_into_vec(&mut computations.0);
 
     debug_info.add("forces", now.elapsed());
 }
@@ -166,12 +206,12 @@ fn compute_forces(
 fn apply_forces(
     mut debug_info: ResMut<DebugDurations>,
     mut query: Query<(&mut PointVelocity, &mut PointPosition)>,
-    forces: Res<ParticleForces>,
+    computations: Res<ParticleComputations>,
     time: Res<Time>,
 ) {
     const DRAG_HALFLIFE: f64 = 1.0 / 0.043;
 
-    if forces.0.is_empty() { return }
+    if computations.0.is_empty() { return }
 
     let dt = time.delta_secs_f64();
     if dt == 0.0 { return }
@@ -181,7 +221,7 @@ fn apply_forces(
     // DO NOT change these nested loop patterns, it is more performant than a single iter_mut!
     for (mut velocities, positions) in query.contiguous_iter_mut().unwrap() {
         for (i, (velocity, position)) in velocities.iter_mut().zip(positions).enumerate() {
-            let force = forces.0[i];
+            let force = computations.0[i].force;
             **velocity *= 0.5f64.powf(DRAG_HALFLIFE * dt);
             **velocity += force * dt;
             **position += **velocity * dt;
@@ -201,11 +241,11 @@ fn translate_bodies(
 }
 
 #[inline]
-fn get_force(body0: &BodySnapshot, body1: &BodySnapshot, forces: &ForceMatrix) -> DVec3 {
+fn get_computation(body0: &BodySnapshot, body1: &BodySnapshot, forces: &ForceMatrix, density_factor: f64) -> ParticleComputation {
     let min_pos = (body1.position - body0.position + 0.5).rem_euclid(DVec3::ONE) - 0.5;
     let dist_sqrd = min_pos.length_squared();
     if dist_sqrd > MAX_DIST_SQRD || dist_sqrd < 1e-30 {
-        return DVec3::ZERO;
+        return ParticleComputation::ZERO;
     }
 
     let dist = dist_sqrd.sqrt();
@@ -217,9 +257,20 @@ fn get_force(body0: &BodySnapshot, body1: &BodySnapshot, forces: &ForceMatrix) -
         rel_dist * MIN_DIST_RECIP - 1.0
     } else {
         let f = forces[(body0.color, body1.color)];
-        if f == 0.0 { return DVec3::ZERO }
+        if f == 0.0 { return ParticleComputation::ZERO }
+        // Attenuate attraction when local density exceeds the limit.
+        let f = if f > 0.0 { f * density_factor } else { f };
         f * (1.0 - (1.0 + MIN_REL_DIST - 2.0 * rel_dist) * INV_MIN_DIST_RECIP)
     };
 
-    dir * (force * MAX_DIST)
+    let weight = if body0.color == body1.color {
+        DENSITY_SAME_COLOR
+    } else {
+        DENSITY_DIFF_COLOR
+    };
+
+    ParticleComputation {
+        force: dir * (force * MAX_DIST),
+        density: weight * (1.0 - rel_dist),
+    }
 }
