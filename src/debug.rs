@@ -10,6 +10,7 @@ use std::{fmt::Display, time::Duration};
 
 use crate::{SCALE, next_state};
 use crate::physics::forces::ForceMatrix;
+use crate::physics::DensityAttenuation;
 use crate::positioners::CurrentPositioner;
 use crate::traits::{FpsOverlay as _, NextVariant};
 
@@ -97,6 +98,12 @@ fn setup_ui(
                     text_font.clone(),
                     text_shadow,
                 ),
+                (
+                    TextSpan::default(),
+                    text_color,
+                    text_font.clone(),
+                    text_shadow,
+                ),
             ]
         )],
     ));
@@ -134,11 +141,16 @@ fn debug_ui(
     debug_info: Res<DebugDurations>,
     forces: Res<ForceMatrix>,
     positioner: Res<CurrentPositioner>,
+    density_attenuation: Res<DensityAttenuation>,
     ui_text: Single<Entity, With<DebugText>>,
 ) {
     *writer.text(*ui_text, 2) = forces.to_string();
     *writer.text(*ui_text, 3) = format!("Positioner: {}\n", *positioner);
     *writer.text(*ui_text, 4) = debug_info.to_string();
+    *writer.text(*ui_text, 5) = format!(
+        "\ndensities: {} (F2)\n",
+        if density_attenuation.0 { "ON" } else { "OFF" }
+    );
 }
 
 const MAX_ITEMS: usize = 64;

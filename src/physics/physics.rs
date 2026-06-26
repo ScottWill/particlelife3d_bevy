@@ -68,6 +68,14 @@ impl ParticleComputation {
 #[derive(Default, Resource)]
 struct ParticleComputations(Vec<ParticleComputation>);
 
+/// When enabled, attractive forces are attenuated in high-density regions.
+#[derive(Resource)]
+pub struct DensityAttenuation(pub bool);
+
+impl Default for DensityAttenuation {
+    fn default() -> Self { Self(true) }
+}
+
 /// When set, the physics pipeline runs once then returns to Paused.
 #[derive(Default, Resource)]
 struct StepOnce(bool);
@@ -92,6 +100,7 @@ impl Plugin for ParticlePhysicsPlugin {
         app.init_state::<PhysicsRunState>();
         app.init_resource::<ParticleComputations>();
         app.init_resource::<StepOnce>();
+        app.init_resource::<DensityAttenuation>();
 
         // Fixed physics timestep at 1/240s
         // app.insert_resource(Time::<Fixed>::from_hz(240.0));
@@ -99,6 +108,7 @@ impl Plugin for ParticlePhysicsPlugin {
         app.add_systems(Update, (
             next_state::<PhysicsRunState>.run_if(input_just_pressed(KeyCode::Enter)),
             trigger_step.run_if(input_pressed(KeyCode::Space)),
+            toggle_density_attenuation.run_if(input_just_pressed(KeyCode::F2)),
         ));
 
         app.configure_sets(FixedUpdate, IslandSet.before(PhysicsSet));
@@ -131,6 +141,11 @@ fn trigger_step(
 ) {
     step_once.0 = true;
     next_state.set(PhysicsRunState::Running);
+}
+
+/// Toggle density-based force attenuation on/off.
+fn toggle_density_attenuation(mut attenuation: ResMut<DensityAttenuation>) {
+    attenuation.0 = !attenuation.0;
 }
 
 /// After a step-once tick completes, return to Paused.
@@ -166,10 +181,12 @@ fn compute_forces(
     grid: Res<IslandGrid>,
     neighborhoods: Res<IslandNeighborhoods>,
     snapshots: Res<BodySnapshots>,
+    attenuation: Res<DensityAttenuation>,
 ) {
     if snapshots.0.is_empty() { return }
 
     let now = Instant::now();
+    let use_attenuation = attenuation.0;
 
     // Snapshot previous-tick densities so we can write into computations without aliasing.
     let prev_densities = computations.0
@@ -181,8 +198,12 @@ fn compute_forces(
         .par_iter()
         .enumerate()
         .map(|(ix, body0)| {
-            let density = prev_densities.get(ix).copied().unwrap_or_default();
-            let density_factor = 1.0 - (density - DENSITY_LIMIT).clamp(0.0, 1.0);
+            let density_factor = if use_attenuation {
+                let density = prev_densities.get(ix).copied().unwrap_or_default();
+                1.0 - (density - DENSITY_LIMIT).clamp(0.0, 1.0)
+            } else {
+                1.0
+            };
 
             let island_ix = get_island_ix(body0.position, &grid);
             // let mut total_force = DVec3::ZERO;

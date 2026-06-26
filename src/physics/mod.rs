@@ -4,4 +4,4 @@ pub mod islands;
 mod physics;
 
 pub use bodies::{PointBody, PointColor, PointPosition};
-pub use physics::ParticlePhysicsPlugin;
+pub use physics::{DensityAttenuation, ParticlePhysicsPlugin};
