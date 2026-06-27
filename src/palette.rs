@@ -1,9 +1,9 @@
 use bevy::input::common_conditions::input_just_pressed;
 use bevy::prelude::*;
 use rand::RngExt;
-use crate::config::COLORS;
 use crate::physics::forces::ForceMatrix;
 use crate::physics::{PointBody, PointColor};
+use crate::settings_panel::SimulationConfig;
 
 pub struct PalettePlugin;
 
@@ -27,8 +27,9 @@ impl Plugin for PalettePlugin {
 fn create_resource(
     mut commands: Commands,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    config: Res<SimulationConfig>,
 ) {
-    commands.insert_resource(Palette::new(&mut materials, COLORS));
+    commands.insert_resource(Palette::new(&mut materials, config.color_count));
 }
 
 fn reset_palette<

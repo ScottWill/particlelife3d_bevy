@@ -6,6 +6,7 @@ use std::time::Instant;
 use std::ops::AddAssign;
 
 use crate::physics::bodies::BodyPlugin;
+use crate::settings_panel::SimulationConfig;
 use crate::{next_state, debug::DebugDurations, traits::NextVariant, translate};
 use super::bodies::{BodySnapshot, PointColor, PointPosition, PointVelocity};
 use super::forces::{ForceMatrix, ForceMatrixPlugin};
@@ -14,19 +15,34 @@ use super::islands::{
     assign_islands, build_neighborhoods, clear_islands, get_island_ix,
 };
 
-const MAX_DIST: f64 = 0.045;
-const MIN_REL_DIST: f64 = 1.0 / 3.0;
-const MAX_DIST_RECIP: f64 = 1.0 / MAX_DIST;
-const MAX_DIST_SQRD: f64 = MAX_DIST * MAX_DIST;
-const MIN_DIST_RECIP: f64 = 1.0 / MIN_REL_DIST;
-const INV_MIN_DIST_RECIP: f64 = 1.0 / (1.0 - MIN_REL_DIST);
+/// Pre-computed physics parameters derived from `SimulationConfig` each tick.
+struct PhysicsParams {
+    max_dist: f64,
+    min_rel_dist: f64,
+    max_dist_recip: f64,
+    max_dist_sqrd: f64,
+    min_dist_recip: f64,
+    inv_min_dist_recip: f64,
+    density_limit: f64,
+    density_same_color: f64,
+    density_diff_color: f64,
+}
 
-/// Density above this threshold starts attenuating attractive forces.
-const DENSITY_LIMIT: f64 = 12.0;
-/// Density contribution weight for same-color neighbors.
-const DENSITY_SAME_COLOR: f64 = 1.0;
-/// Density contribution weight for different-color neighbors.
-const DENSITY_DIFF_COLOR: f64 = 0.5;
+impl PhysicsParams {
+    fn from_config(config: &SimulationConfig) -> Self {
+        Self {
+            max_dist: config.max_dist,
+            min_rel_dist: config.min_rel_dist,
+            max_dist_recip: config.max_dist.recip(),
+            max_dist_sqrd: config.max_dist * config.max_dist,
+            min_dist_recip: config.min_rel_dist.recip(),
+            inv_min_dist_recip: (1.0 - config.min_rel_dist).recip(),
+            density_limit: config.density_limit,
+            density_same_color: config.density_same_color,
+            density_diff_color: config.density_diff_color,
+        }
+    }
+}
 
 #[derive(Debug, Default, Clone, Copy, Eq, Hash, PartialEq, States)]
 enum PhysicsRunState {
@@ -175,6 +191,7 @@ fn snapshot_bodies(
 
 /// Compute inter-particle forces using islands and the force matrix.
 fn compute_forces(
+    config: Res<SimulationConfig>,
     mut computations: ResMut<ParticleComputations>,
     mut debug_info: ResMut<DebugDurations>,
     force_matrix: Res<ForceMatrix>,
@@ -186,6 +203,7 @@ fn compute_forces(
     if snapshots.0.is_empty() { return }
 
     let now = Instant::now();
+    let params = PhysicsParams::from_config(&config);
     let use_attenuation = attenuation.0;
 
     // Snapshot previous-tick densities so we can write into computations without aliasing.
@@ -200,7 +218,7 @@ fn compute_forces(
         .map(|(ix, body0)| {
             let density_factor = if use_attenuation {
                 let density = prev_densities.get(ix).copied().unwrap_or_default();
-                1.0 - (density - DENSITY_LIMIT).clamp(0.0, 1.0)
+                1.0 - (density - params.density_limit).clamp(0.0, 1.0)
             } else {
                 1.0
             };
@@ -213,7 +231,7 @@ fn compute_forces(
             if let Some(neighborhood) = neighborhoods.0.get(island_ix) {
                 for &jx in neighborhood {
                     if ix == jx { continue }
-                    total_computation += get_computation(body0, &snapshots.0[jx], &force_matrix, density_factor);
+                    total_computation += get_computation(body0, &snapshots.0[jx], &force_matrix, density_factor, &params);
                 }
             }
             total_computation
@@ -225,25 +243,25 @@ fn compute_forces(
 
 /// Apply forces, drag, and velocity integration to body positions.
 fn apply_forces(
+    config: Res<SimulationConfig>,
     mut debug_info: ResMut<DebugDurations>,
     mut query: Query<(&mut PointVelocity, &mut PointPosition)>,
     computations: Res<ParticleComputations>,
     time: Res<Time>,
 ) {
-    const DRAG_HALFLIFE: f64 = 1.0 / 0.043;
-
     if computations.0.is_empty() { return }
 
     let dt = time.delta_secs_f64();
     if dt == 0.0 { return }
 
     let now = Instant::now();
+    let drag_halflife_recip = config.drag_halflife.recip();
 
     // DO NOT change these nested loop patterns, it is more performant than a single iter_mut!
     for (mut velocities, positions) in query.contiguous_iter_mut().unwrap() {
         for (i, (velocity, position)) in velocities.iter_mut().zip(positions).enumerate() {
             let force = computations.0[i].force;
-            **velocity *= 0.5f64.powf(DRAG_HALFLIFE * dt);
+            **velocity *= 0.5f64.powf(drag_halflife_recip * dt);
             **velocity += force * dt;
             **position += **velocity * dt;
         }
@@ -254,44 +272,45 @@ fn apply_forces(
 
 fn translate_bodies(
     mut query: Query<(&mut Transform, &mut PointPosition)>,
+    config: Res<SimulationConfig>,
 ) {
     for (mut transform, mut position) in &mut query {
         **position = position.rem_euclid(DVec3::ONE);
-        transform.translation = translate(**position);
+        transform.translation = translate(**position, config.world_scale);
     }
 }
 
 #[inline]
-fn get_computation(body0: &BodySnapshot, body1: &BodySnapshot, forces: &ForceMatrix, density_factor: f64) -> ParticleComputation {
+fn get_computation(body0: &BodySnapshot, body1: &BodySnapshot, forces: &ForceMatrix, density_factor: f64, params: &PhysicsParams) -> ParticleComputation {
     let min_pos = (body1.position - body0.position + 0.5).rem_euclid(DVec3::ONE) - 0.5;
     let dist_sqrd = min_pos.length_squared();
-    if dist_sqrd > MAX_DIST_SQRD || dist_sqrd < 1e-30 {
+    if dist_sqrd > params.max_dist_sqrd || dist_sqrd < 1e-30 {
         return ParticleComputation::ZERO;
     }
 
     let dist = dist_sqrd.sqrt();
     let dist_recip = dist.recip();
-    let rel_dist = dist * MAX_DIST_RECIP;
+    let rel_dist = dist * params.max_dist_recip;
     let dir = min_pos * dist_recip;
 
-    let force = if rel_dist <= MIN_REL_DIST {
-        rel_dist * MIN_DIST_RECIP - 1.0
+    let force = if rel_dist <= params.min_rel_dist {
+        rel_dist * params.min_dist_recip - 1.0
     } else {
         let f = forces[(body0.color, body1.color)];
         if f == 0.0 { return ParticleComputation::ZERO }
         // Attenuate attraction when local density exceeds the limit.
         let f = if f > 0.0 { f * density_factor } else { f };
-        f * (1.0 - (1.0 + MIN_REL_DIST - 2.0 * rel_dist) * INV_MIN_DIST_RECIP)
+        f * (1.0 - (1.0 + params.min_rel_dist - 2.0 * rel_dist) * params.inv_min_dist_recip)
     };
 
     let weight = if body0.color == body1.color {
-        DENSITY_SAME_COLOR
+        params.density_same_color
     } else {
-        DENSITY_DIFF_COLOR
+        params.density_diff_color
     };
 
     ParticleComputation {
-        force: dir * (force * MAX_DIST),
+        force: dir * (force * params.max_dist),
         density: weight * (1.0 - rel_dist),
     }
 }

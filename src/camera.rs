@@ -7,6 +7,8 @@ use bevy::prelude::*;
 use bevy::input::{common_conditions::input_pressed};
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll};
 
+use crate::settings_panel::CameraInputEnabled;
+
 #[derive(Default)]
 pub struct CameraPlugin<C> {
     _phantom: PhantomData<C>,
@@ -96,8 +98,10 @@ fn pan_bodies<
     camera: Single<&GlobalTransform, With<MainCamera>>,
     keys: Res<ButtonInput<KeyCode>>,
     time: Res<Time>,
+    camera_input: Res<CameraInputEnabled>,
 )
 {
+    if !camera_input.0 { return; }
     let (forward, right) = if keys.pressed(KeyCode::ShiftLeft) {
         looking_axis(camera)
     } else {
@@ -127,7 +131,9 @@ fn update_camera(
     mouse_motion: Res<AccumulatedMouseMotion>,
     mouse_scroll: Res<AccumulatedMouseScroll>,
     auto_orbit: Res<AutoOrbit>,
+    camera_input: Res<CameraInputEnabled>,
 ) {
+    if !camera_input.0 { return; }
     // When auto-orbiting, skip manual mouse controls
     if auto_orbit.active {
         return;
@@ -178,7 +184,9 @@ fn cancel_auto_orbit_on_input(
     mouse_scroll: Res<AccumulatedMouseScroll>,
     keys: Res<ButtonInput<KeyCode>>,
     mut auto_orbit: ResMut<AutoOrbit>,
+    camera_input: Res<CameraInputEnabled>,
 ) {
+    if !camera_input.0 { return; }
     if !auto_orbit.active {
         return;
     }
@@ -202,7 +210,9 @@ fn auto_orbit_camera(
     camera_settings: Res<CameraSettings>,
     auto_orbit: Res<AutoOrbit>,
     time: Res<Time>,
+    camera_input: Res<CameraInputEnabled>,
 ) {
+    if !camera_input.0 { return; }
     if !auto_orbit.active {
         return;
     }

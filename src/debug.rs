@@ -1,162 +1,13 @@
-use bevy::color::palettes::css::{BLUE, GREEN, RED};
-use bevy::dev_tools::fps_overlay::FpsOverlayConfig;
-use bevy::input::common_conditions::input_just_pressed;
 use bevy::platform::collections::HashMap;
-use bevy::{dev_tools::fps_overlay::FpsOverlayPlugin, prelude::*};
-use bevy::time::common_conditions::on_timer;
+use bevy::prelude::*;
 use std::collections::VecDeque;
-use std::fmt::{Formatter, Result};
-use std::{fmt::Display, time::Duration};
-
-use crate::{SCALE, next_state};
-use crate::physics::forces::ForceMatrix;
-use crate::physics::DensityAttenuation;
-use crate::positioners::CurrentPositioner;
-use crate::traits::{FpsOverlay as _, NextVariant};
-
-#[derive(Component)]
-struct DebugText;
-
-pub struct DebugPlugin;
-
-impl Plugin for DebugPlugin {
-    fn build(&self, app: &mut App) {
-        app.add_plugins(FpsOverlayPlugin::overlay());
-        app.insert_resource(DebugDurations::with_order(&["islands", "forces", "stepping"]));
-        app.init_state::<UiState>();
-        app.add_systems(Startup, setup_ui);
-        app.add_systems(Update, (
-            next_state::<UiState>.run_if(input_just_pressed(KeyCode::Escape)),
-            toggle_ui.run_if(state_changed::<UiState>).after(next_state::<UiState>),
-        ));
-        app.add_systems(PostUpdate,
-            debug_ui.run_if(
-                on_timer(Duration::from_millis(100))
-                    .and_then(in_state(UiState::Visible))
-            )
-        );
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq, States)]
-enum UiState {
-    Hidden,
-    #[default]
-    Visible,
-}
-
-impl NextVariant for UiState {
-    fn next(&self) -> Self {
-        match self {
-            UiState::Hidden => UiState::Visible,
-            UiState::Visible => UiState::Hidden,
-        }
-    }
-}
-
-fn setup_ui(
-    mut commands: Commands,
-    mut gizmos: ResMut<Assets<GizmoAsset>>,
-) {
-    let text_color = TextColor(Color::linear_rgb(0.0, 1.0, 0.0));
-    let text_font = TextFont::from_font_size(12.0);
-    let text_shadow = TextShadow { offset: Vec2::splat(1.0), ..default() };
-    commands.spawn((
-        Node {
-            margin: UiRect::axes(px(1), px(47)),
-            ..default()
-        },
-        children![(
-            DebugText,
-            BackgroundColor(Color::linear_rgba(0.3, 0.3, 0.3, 0.3)),
-            Text::new("---- Debug Info ----\n"),
-            text_color,
-            text_font.clone(),
-            text_shadow,
-            children![
-                (
-                    TextSpan::new("   --- Forces ---\n"),
-                    text_color,
-                    text_font.clone(),
-                    text_shadow,
-                ),
-                (
-                    TextSpan::default(),
-                    text_color,
-                    text_font.clone(),
-                    text_shadow,
-                ),
-                (
-                    TextSpan::default(),
-                    text_color,
-                    text_font.clone(),
-                    text_shadow,
-                ),
-                (
-                    TextSpan::default(),
-                    text_color,
-                    text_font.clone(),
-                    text_shadow,
-                ),
-                (
-                    TextSpan::default(),
-                    text_color,
-                    text_font.clone(),
-                    text_shadow,
-                ),
-            ]
-        )],
-    ));
-
-    let mut gizmo = GizmoAsset::default();
-    gizmo.cube(Transform::IDENTITY.with_scale(Vec3::splat(SCALE as f32)), GREEN);
-    gizmo.arrow(Vec3::NEG_X * 0.5, Vec3::X * 0.5, RED);
-    gizmo.arrow(Vec3::NEG_Y * 0.5, Vec3::Y * 0.5, GREEN);
-    gizmo.arrow(Vec3::NEG_Z * 0.5, Vec3::Z * 0.5, BLUE);
-
-    commands.spawn(Gizmo { handle: gizmos.add(gizmo), ..default() });
-}
-
-fn toggle_ui(
-    mut commands: Commands,
-    mut overlay: ResMut<FpsOverlayConfig>,
-    text: Single<Entity, With<DebugText>>,
-    state: Res<State<UiState>>,
-) {
-    overlay.enabled = match state.get() {
-        UiState::Hidden => false,
-        UiState::Visible => true,
-    };
-    overlay.frame_time_graph_config.enabled = overlay.enabled;
-
-    let visibility = match overlay.enabled {
-        true => Visibility::Visible,
-        false => Visibility::Hidden,
-    };
-    commands.entity(*text).insert(visibility);
-}
-
-fn debug_ui(
-    mut writer: TextUiWriter,
-    debug_info: Res<DebugDurations>,
-    forces: Res<ForceMatrix>,
-    positioner: Res<CurrentPositioner>,
-    density_attenuation: Res<DensityAttenuation>,
-    ui_text: Single<Entity, With<DebugText>>,
-) {
-    *writer.text(*ui_text, 2) = forces.to_string();
-    *writer.text(*ui_text, 3) = format!("Positioner: {}\n", *positioner);
-    *writer.text(*ui_text, 4) = debug_info.to_string();
-    *writer.text(*ui_text, 5) = format!(
-        "\ndensities: {} (F2)\n",
-        if density_attenuation.0 { "ON" } else { "OFF" }
-    );
-}
+use std::fmt::{Display, Formatter, Result};
+use std::time::Duration;
 
 const MAX_ITEMS: usize = 64;
 
 #[derive(Default)]
-struct AvgDuration {
+pub struct AvgDuration {
     total: f32,
     durations: VecDeque<f32>,
 }
@@ -168,7 +19,7 @@ impl Display for AvgDuration {
 }
 
 impl AvgDuration {
-    fn add(&mut self, duration: Duration) {
+    pub fn add(&mut self, duration: Duration) {
         if self.durations.len() == MAX_ITEMS {
             let old_ms = self.durations.pop_back().unwrap();
             self.total -= old_ms;
@@ -178,14 +29,14 @@ impl AvgDuration {
         self.total += ms;
     }
 
-    fn avg(&self) -> f32 {
+    pub fn avg(&self) -> f32 {
         self.total / MAX_ITEMS as f32
     }
 }
 
 #[derive(Default, Resource)]
 pub struct DebugDurations {
-    durations: HashMap<String,AvgDuration>,
+    durations: HashMap<String, AvgDuration>,
     order: Option<Vec<&'static str>>,
 }
 
@@ -223,6 +74,41 @@ impl DebugDurations {
             let mut value = AvgDuration::default();
             value.add(duration);
             self.durations.insert(name.to_owned(), value);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(256))]
+
+        // Feature: egui-settings-panel, Property 4: Rolling average correctness
+        /// **Validates: Requirements 3.4**
+        #[test]
+        fn rolling_average_correctness(
+            durations_ms in proptest::collection::vec(1u64..10_000, 1..=128),
+        ) {
+            let mut tracker = AvgDuration::default();
+            for &ms in &durations_ms {
+                tracker.add(Duration::from_millis(ms));
+            }
+
+            // Expected average: sum of last min(n, 64) samples divided by MAX_ITEMS (64)
+            // The avg() method always divides by MAX_ITEMS, not by actual count
+            let window_size = durations_ms.len().min(MAX_ITEMS);
+            let recent = &durations_ms[durations_ms.len() - window_size..];
+            let expected_sum: f32 = recent.iter().map(|&ms| ms as f32).sum();
+            let expected_avg = expected_sum / MAX_ITEMS as f32;
+            let actual_avg = tracker.avg();
+
+            // Allow small floating point tolerance
+            let diff = (actual_avg - expected_avg).abs();
+            prop_assert!(diff < 0.01,
+                "Expected avg {:.3}, got {:.3} (diff: {:.6})", expected_avg, actual_avg, diff);
         }
     }
 }

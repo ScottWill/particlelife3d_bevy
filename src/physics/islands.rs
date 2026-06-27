@@ -66,7 +66,7 @@ fn setup_islands(
     commands.insert_resource(grid);
 }
 
-fn compute_neighbor_ixs(side: usize, size: usize) -> Vec<[usize; 27]> {
+pub fn compute_neighbor_ixs(side: usize, size: usize) -> Vec<[usize; 27]> {
     let s = side as isize;
     let mut result = Vec::with_capacity(size);
 

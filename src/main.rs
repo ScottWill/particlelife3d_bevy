@@ -6,22 +6,19 @@ use bevy::state::state::FreelyMutableState;
 use rand::RngExt as _;
 
 use crate::camera::CameraPlugin;
-use crate::config::BODIES;
-use crate::debug::DebugPlugin;
 use crate::palette::{PalettePlugin};
 use crate::physics::ParticlePhysicsPlugin;
 use crate::physics::{PointBody, PointPosition};
 use crate::positioners::{CurrentPositioner, PositionerPlugin, get_position};
+use crate::settings_panel::{SettingsPanelPlugin, SimulationConfig};
 use crate::traits::{Fullscreen as _, NextVariant, PrevVariant};
 
-const SCALE: f64 = 128.0;
-
 mod camera;
-mod config;
 mod debug;
 mod palette;
 mod physics;
 mod positioners;
+mod settings_panel;
 mod traits;
 
 fn main() {
@@ -29,10 +26,10 @@ fn main() {
         .add_plugins((
             DefaultPlugins.set(WindowPlugin::fullscreen()),
             CameraPlugin::<PointPosition>::default(),
-            DebugPlugin,
             PalettePlugin,
             ParticlePhysicsPlugin,
             PositionerPlugin,
+            SettingsPanelPlugin,
         ))
         .add_message::<UpdateBodies>()
         .add_systems(Startup, setup)
@@ -47,7 +44,7 @@ fn main() {
 }
 
 #[derive(Message)]
-struct UpdateBodies;
+pub struct UpdateBodies;
 
 #[derive(Deref, Resource)]
 struct SphereHandle(Handle<Mesh>);
@@ -81,21 +78,24 @@ fn match_body_count(
     query: Query<Entity, With<PointBody>>,
     mesh: Res<SphereHandle>,
     positioner: Res<CurrentPositioner>,
+    config: Res<SimulationConfig>,
 ) {
+    let target = config.particle_count;
     let mut current_size = query.count();
 
-    if BODIES > current_size {
+    if target > current_size {
         build_batch(
             &mut commands,
             &mesh,
-            BODIES - current_size,
+            target - current_size,
             positioner.0,
+            config.world_scale,
         );
         return
     }
 
     let mut rng = rand::rng();
-    while current_size > BODIES {
+    while current_size > target {
         let rix = rng.random::<u64>() as usize % current_size;
         if let Some(entity) = query.iter().nth(rix) {
             commands.entity(entity).despawn();
@@ -111,6 +111,7 @@ fn build_batch(
     mesh: &Handle<Mesh>,
     count: usize,
     pos_type: crate::positioners::PositionerType,
+    scale: f64,
 ) {
     let mut rng = rand::rng();
     let mut batch = Vec::with_capacity(count);
@@ -120,7 +121,7 @@ fn build_batch(
             PointBody,
             PointPosition(position),
             Mesh3d(mesh.clone()),
-            Transform::from_translation(translate(position)),
+            Transform::from_translation(translate(position, scale)),
         ));
     }
 
@@ -128,8 +129,8 @@ fn build_batch(
 }
 
 #[inline]
-pub fn translate(pos: DVec3) -> Vec3 {
-    ((pos - 0.5) * SCALE).as_vec3()
+pub fn translate(pos: DVec3, scale: f64) -> Vec3 {
+    ((pos - 0.5) * scale).as_vec3()
 }
 
 pub fn next_state<S>(

@@ -2,13 +2,13 @@ use bevy::{input::common_conditions::input_just_pressed, prelude::*};
 use rand::random;
 use std::{fmt::{Debug, Display, Formatter, Result}, ops::Index};
 
-use crate::{config::COLORS, traits::{NextVariant, PrevVariant}};
+use crate::{settings_panel::SimulationConfig, traits::{NextVariant, PrevVariant}};
 
 pub struct ForceMatrixPlugin;
 
 impl Plugin for ForceMatrixPlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(ForceMatrix::new(COLORS, ForceMatrixType::default()));
+        app.add_systems(Startup, setup_force_matrix);
         app.init_resource::<SavedForceMatrix>();
         app.init_resource::<F9HoldTimer>();
         app.add_systems(Update, (
@@ -25,6 +25,10 @@ impl Plugin for ForceMatrixPlugin {
             load_forces_on_hold,
         ));
     }
+}
+
+fn setup_force_matrix(mut commands: Commands, config: Res<SimulationConfig>) {
+    commands.insert_resource(ForceMatrix::new(config.color_count, ForceMatrixType::default()));
 }
 
 #[derive(Resource, Default)]
@@ -567,5 +571,94 @@ pub struct IdentForceMatrix;
 impl MatrixProvider for IdentForceMatrix {
     fn force(_: usize, _: usize, _: usize) -> f64 {
         1.0
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    fn arb_force_matrix_type() -> impl Strategy<Value = ForceMatrixType> {
+        prop_oneof![
+            Just(ForceMatrixType::Chains),
+            Just(ForceMatrixType::Checkered),
+            Just(ForceMatrixType::RandomEx),
+            Just(ForceMatrixType::Random),
+            Just(ForceMatrixType::Snakes),
+            Just(ForceMatrixType::Zeros),
+            Just(ForceMatrixType::Ones),
+        ]
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(256))]
+
+        // Feature: egui-settings-panel, Property 2: Force matrix dimension invariant
+        // **Validates: Requirements 9.2, 10.3**
+        #[test]
+        fn force_matrix_dimension_invariant(
+            color_count in 1usize..=9,
+            matrix_type in arb_force_matrix_type(),
+        ) {
+            let matrix = ForceMatrix::new(color_count, matrix_type);
+            prop_assert_eq!(matrix.data.len(), color_count * color_count);
+            for &cell in &matrix.data {
+                prop_assert!(cell >= -1.0 && cell <= 1.0,
+                    "Cell value {} out of range [-1.0, 1.0]", cell);
+            }
+        }
+
+        // Feature: egui-settings-panel, Property 3: Force matrix display completeness
+        // **Validates: Requirements 3.2, 10.4**
+        #[test]
+        fn force_matrix_display_completeness(
+            color_count in 1usize..=9,
+            matrix_type in arb_force_matrix_type(),
+        ) {
+            let matrix = ForceMatrix::new(color_count, matrix_type);
+            let display = format!("{}", matrix);
+
+            // Must contain the matrix type name
+            let type_name = format!("{:?}", matrix_type);
+            prop_assert!(display.contains(&type_name),
+                "Display should contain type name '{}', got: {}", type_name, display);
+
+            // Must contain color count
+            let color_str = format!("Colors: {}", color_count);
+            prop_assert!(display.contains(&color_str),
+                "Display should contain '{}', got: {}", color_str, display);
+
+            // Count values by splitting the data lines and counting formatted floats
+            // The format is: "Type: ...\nColors: N\nrow0\nrow1\n...\n"
+            let lines: Vec<&str> = display.lines().collect();
+            // First line is "Type: ..." and second is "Colors: ..."
+            // Remaining lines are data rows
+            let data_lines = &lines[2..];
+            prop_assert_eq!(data_lines.len(), color_count,
+                "Expected {} data rows, found {}", color_count, data_lines.len());
+
+            let mut total_values = 0;
+            for line in data_lines {
+                // Count comma-separated values in each row
+                let values: Vec<&str> = line.split(',').collect();
+                prop_assert_eq!(values.len(), color_count,
+                    "Expected {} values per row, found {}", color_count, values.len());
+                total_values += values.len();
+
+                // Verify each value has 3 decimal places
+                for val in &values {
+                    let trimmed = val.trim();
+                    prop_assert!(trimmed.contains('.'),
+                        "Value '{}' should contain decimal point", trimmed);
+                    let decimals = trimmed.split('.').last().unwrap();
+                    prop_assert_eq!(decimals.len(), 3,
+                        "Value '{}' should have 3 decimal places, has {}", trimmed, decimals.len());
+                }
+            }
+            prop_assert_eq!(total_values, color_count * color_count,
+                "Expected {} total values, found {}", color_count * color_count, total_values);
+        }
     }
 }
