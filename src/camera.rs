@@ -6,6 +6,7 @@ use bevy::math::DVec3;
 use bevy::prelude::*;
 use bevy::input::{common_conditions::input_pressed};
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll};
+use bevy::window::{CursorGrabMode, CursorOptions};
 
 use crate::settings_panel::CameraInputEnabled;
 
@@ -132,19 +133,37 @@ fn update_camera(
     mouse_scroll: Res<AccumulatedMouseScroll>,
     auto_orbit: Res<AutoOrbit>,
     camera_input: Res<CameraInputEnabled>,
+    cursor_query: Query<&CursorOptions>,
 ) {
-    if !camera_input.0 { return; }
+    // Zoom: scroll wheel adjusts orbit distance regardless of mouse lock state,
+    // but still blocked when pointer is over egui (camera_input handles that).
+    // Allow zoom when: camera_input is enabled, OR cursor is locked (mouse captured).
+    let cursor_locked = cursor_query.iter().any(|c| c.grab_mode == CursorGrabMode::Locked);
+    let zoom_allowed = !auto_orbit.active && (camera_input.0 || cursor_locked);
+
+    let zoomed = if zoom_allowed && mouse_scroll.delta.y != 0.0 {
+        let delta_zoom = 1.0 - mouse_scroll.delta.y * camera_settings.zoom_speed;
+        camera_settings.orbit_distance = (camera_settings.orbit_distance * delta_zoom).clamp(
+            camera_settings.orbit_distance_range.start,
+            camera_settings.orbit_distance_range.end,
+        );
+        true
+    } else {
+        false
+    };
+
+    if !camera_input.0 {
+        // Still update camera position if zoom changed while input is disabled
+        if zoomed {
+            let target = Vec3::ZERO;
+            camera.translation = target - camera.forward() * camera_settings.orbit_distance;
+        }
+        return;
+    }
     // When auto-orbiting, skip manual mouse controls
     if auto_orbit.active {
         return;
     }
-
-    // Zoom: scroll wheel adjusts orbit distance logarithmically
-    let delta_zoom = 1.0 - mouse_scroll.delta.y * camera_settings.zoom_speed;
-    camera_settings.orbit_distance = (camera_settings.orbit_distance * delta_zoom).clamp(
-        camera_settings.orbit_distance_range.start,
-        camera_settings.orbit_distance_range.end,
-    );
 
     // Orbit: mouse motion adjusts pitch and yaw
     let (delta_pitch, delta_yaw) = {

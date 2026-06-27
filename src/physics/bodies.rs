@@ -1,7 +1,9 @@
 use bevy::{math::DVec3, prelude::*};
+use rand::distr::weighted::WeightedIndex;
+use rand::prelude::*;
 use rand::random_range;
 
-use crate::{camera::Position, palette::Palette};
+use crate::{camera::Position, palette::Palette, settings_panel::SimulationConfig};
 
 #[derive(Clone, Copy, Component, Default, Deref, DerefMut)]
 pub struct PointBodyIndex(usize);
@@ -49,8 +51,18 @@ fn add_components(
     trigger: On<Add, PointBody>,
     mut commands: Commands,
     palette: Res<Palette>,
+    config: Res<SimulationConfig>,
 ) {
-    let color = random_range(0..palette.size());
+    let color = match WeightedIndex::new(&config.color_weights) {
+        Ok(dist) => {
+            let mut rng = rand::rng();
+            dist.sample(&mut rng)
+        }
+        Err(_) => {
+            // Fallback to uniform if weights are invalid
+            random_range(0..palette.size())
+        }
+    };
     commands.entity(trigger.entity).insert((
         MeshMaterial3d(palette[color].clone()),
         PointColor(color),

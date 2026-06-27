@@ -28,11 +28,16 @@ impl Plugin for SettingsPanelPlugin {
         app.init_resource::<CameraInputEnabled>();
         app.insert_resource(DebugDurations::with_order(&["islands", "forces", "stepping"]));
         app.add_message::<RebuildPalette>();
+        app.add_message::<RedistributeColors>();
         app.add_systems(Startup, (setup_gizmos, setup_egui_camera));
         app.add_systems(Update, (toggle_mouse_control, gate_camera_input, rebuild_islands_if_needed, update_gizmo_scale, update_camera_viewport));
         app.add_systems(
             Update,
             handle_palette_rebuild.run_if(on_message::<RebuildPalette>),
+        );
+        app.add_systems(
+            Update,
+            handle_redistribute_colors.run_if(on_message::<RedistributeColors>),
         );
         app.add_systems(EguiPrimaryContextPass, render_panel);
     }
@@ -115,6 +120,9 @@ pub struct SimulationConfig {
     pub density_same_color: f64,
     pub density_diff_color: f64,
     pub world_scale: f64,
+    /// Per-color probability weights for particle color assignment.
+    /// Length always equals `color_count`; entries sum to 1.0.
+    pub color_weights: Vec<f64>,
 }
 
 impl Default for SimulationConfig {
@@ -129,13 +137,103 @@ impl Default for SimulationConfig {
             density_same_color: 1.0,
             density_diff_color: 0.5,
             world_scale: 128.0,
+            color_weights: vec![1.0 / 5.0; 5],
         }
     }
 }
 
 impl SimulationConfig {
+    /// Resizes `color_weights` to match `color_count`, preserving sum = 1.0.
+    ///
+    /// - **Growing:** new entries get equal share taken proportionally from existing weights.
+    /// - **Shrinking:** removed weight is redistributed proportionally among remaining entries.
+    /// - A final normalization pass guarantees sum = 1.0.
+    pub fn resize_weights(&mut self) {
+        let new_count = self.color_count;
+        let old_count = self.color_weights.len();
+
+        if new_count == old_count {
+            return;
+        }
+
+        if new_count > old_count {
+            // Growing: scale existing weights down, add new entries with equal share
+            let scale = old_count as f64 / new_count as f64;
+            let share = 1.0 / new_count as f64;
+            for w in self.color_weights.iter_mut() {
+                *w *= scale;
+            }
+            self.color_weights.resize(new_count, share);
+        } else {
+            // Shrinking: remove excess entries, redistribute among remaining
+            self.color_weights.truncate(new_count);
+            let remaining_sum: f64 = self.color_weights.iter().sum();
+            if remaining_sum > 0.0 {
+                for w in self.color_weights.iter_mut() {
+                    *w /= remaining_sum;
+                }
+            } else {
+                let uniform = 1.0 / new_count as f64;
+                for w in self.color_weights.iter_mut() {
+                    *w = uniform;
+                }
+            }
+        }
+
+        // Final normalization pass to guarantee sum = 1.0
+        let sum: f64 = self.color_weights.iter().sum();
+        if sum > 0.0 {
+            for w in self.color_weights.iter_mut() {
+                *w /= sum;
+            }
+        }
+    }
+
+    /// Adjusts weight at `index` to `new_value`, redistributing the difference
+    /// evenly among all other weights. Maintains sum = 1.0.
+    ///
+    /// Single-color case: early return (weight locked at 1.0).
+    pub fn set_weight(&mut self, index: usize, new_value: f64) {
+        let others_count = self.color_weights.len() - 1;
+        if others_count == 0 {
+            // Single color: weight is locked at 1.0
+            return;
+        }
+
+        let old_value = self.color_weights[index];
+        let diff = new_value - old_value;
+        let per_other = diff / others_count as f64;
+
+        self.color_weights[index] = new_value;
+        for i in 0..self.color_weights.len() {
+            if i != index {
+                self.color_weights[i] -= per_other;
+            }
+        }
+
+        // Clamp all to [0.0, 1.0]
+        for w in self.color_weights.iter_mut() {
+            *w = w.clamp(0.0, 1.0);
+        }
+
+        // Re-normalize so weights sum to 1.0
+        let sum: f64 = self.color_weights.iter().sum();
+        if sum > 0.0 {
+            for w in self.color_weights.iter_mut() {
+                *w /= sum;
+            }
+        } else {
+            // Fallback to uniform if all weights ended up at 0
+            let n = self.color_weights.len() as f64;
+            for w in self.color_weights.iter_mut() {
+                *w = 1.0 / n;
+            }
+        }
+    }
+
     /// Clamps all fields to their valid ranges.
     /// For `particle_count`, also rounds to the nearest multiple of 100.
+    /// For `color_weights`, clamps each entry to [0.0, 1.0] and normalizes so they sum to 1.0.
     pub fn clamp_all(&mut self) {
         self.particle_count = self.particle_count.clamp(100, 500_000);
         self.particle_count = ((self.particle_count + 50) / 100) * 100;
@@ -148,6 +246,24 @@ impl SimulationConfig {
         self.density_same_color = self.density_same_color.clamp(0.0, 5.0);
         self.density_diff_color = self.density_diff_color.clamp(0.0, 5.0);
         self.world_scale = self.world_scale.clamp(16.0, 512.0);
+
+        // Clamp each color weight to [0.0, 1.0]
+        for w in self.color_weights.iter_mut() {
+            *w = w.clamp(0.0, 1.0);
+        }
+
+        // Normalize so weights sum to 1.0; fallback to uniform if sum is 0
+        let sum: f64 = self.color_weights.iter().sum();
+        if sum > 0.0 {
+            for w in self.color_weights.iter_mut() {
+                *w /= sum;
+            }
+        } else {
+            let n = self.color_weights.len() as f64;
+            for w in self.color_weights.iter_mut() {
+                *w = 1.0 / n;
+            }
+        }
     }
 }
 
@@ -164,6 +280,10 @@ impl Default for CameraInputEnabled {
 /// Triggers palette rebuild and particle recoloring for new color_count.
 #[derive(Message)]
 pub struct RebuildPalette;
+
+/// Triggers redistribution of particle colors based on current color_weights.
+#[derive(Message)]
+pub struct RedistributeColors;
 
 /// Controls whether the settings panel is rendered.
 #[derive(Resource)]
@@ -269,12 +389,15 @@ fn gate_camera_input(
 }
 
 fn handle_palette_rebuild(
-    config: Res<SimulationConfig>,
+    mut config: ResMut<SimulationConfig>,
     mut palette: ResMut<Palette>,
     mut force_matrix: ResMut<ForceMatrix>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut query: Query<(&mut MeshMaterial3d<StandardMaterial>, &mut PointColor), With<PointBody>>,
 ) {
+    use rand::distr::weighted::WeightedIndex;
+    use rand::prelude::*;
+
     let color_count = config.color_count;
 
     // Skip if palette already matches (Requirement 6.4)
@@ -289,10 +412,38 @@ fn handle_palette_rebuild(
     let matrix_type = force_matrix.matrix_type;
     *force_matrix = ForceMatrix::new(color_count, matrix_type);
 
-    // Randomly reassign particle colors
+    // Resize weights to match the new color_count
+    config.resize_weights();
+
+    // Reassign particle colors using weighted sampling
+    let dist = match WeightedIndex::new(&config.color_weights) {
+        Ok(d) => d,
+        Err(_) => return, // Defensive fallback
+    };
     let mut rng = rand::rng();
     for (mut mat_handle, mut point_color) in query.iter_mut() {
-        let color = rng.random_range(0..color_count);
+        let color = dist.sample(&mut rng);
+        point_color.0 = color;
+        **mat_handle = palette[color].clone();
+    }
+}
+
+fn handle_redistribute_colors(
+    config: Res<SimulationConfig>,
+    palette: Res<Palette>,
+    mut query: Query<(&mut MeshMaterial3d<StandardMaterial>, &mut PointColor), With<PointBody>>,
+) {
+    use rand::distr::weighted::WeightedIndex;
+    use rand::prelude::*;
+
+    let dist = match WeightedIndex::new(&config.color_weights) {
+        Ok(d) => d,
+        Err(_) => return, // Defensive: if weights are invalid, skip
+    };
+    let mut rng = rand::rng();
+
+    for (mut mat_handle, mut point_color) in query.iter_mut() {
+        let color = dist.sample(&mut rng);
         point_color.0 = color;
         **mat_handle = palette[color].clone();
     }
@@ -310,6 +461,7 @@ fn render_panel(
     time: Res<Time>,
     mut update_bodies: MessageWriter<UpdateBodies>,
     mut rebuild_palette: MessageWriter<RebuildPalette>,
+    mut redistribute_colors: MessageWriter<RedistributeColors>,
     mut panel_width: ResMut<PanelWidth>,
     window: Single<&Window>,
 ) {
@@ -470,6 +622,30 @@ fn render_panel(
                             });
                     });
 
+                egui::CollapsingHeader::new("Distribution")
+                    .default_open(true)
+                    .show(ui, |ui| {
+                        let mut any_changed = false;
+                        for i in 0..config.color_count {
+                            let mut weight = config.color_weights[i];
+                            ui.horizontal(|ui| {
+                                ui.label(format!("{i}"));
+                                let response = ui.add(egui::Slider::new(&mut weight, 0.0..=1.0)
+                                    .step_by(0.01)
+                                    .fixed_decimals(2));
+                                // Only respond to direct user interaction (dragging or clicking),
+                                // not to programmatic value changes from set_weight redistribution.
+                                if response.changed() && (response.dragged() || response.has_focus()) {
+                                    config.set_weight(i, weight);
+                                    any_changed = true;
+                                }
+                            });
+                        }
+                        if any_changed {
+                            redistribute_colors.write(RedistributeColors);
+                        }
+                    });
+
                 egui::CollapsingHeader::new("Appearance")
                     .default_open(true)
                     .show(ui, |ui| {
@@ -544,6 +720,41 @@ mod tests {
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(256))]
 
+        /// Feature: color-distribution-panel, Property 1: Weight vector invariant after resize
+        /// **Validates: Requirements 1.1, 1.2, 1.3, 1.4, 7.1, 7.3**
+        #[test]
+        fn resize_weights_invariant(
+            raw_weights in prop::collection::vec(0.01f64..1.0, 1..10usize),
+            new_color_count in 1..=9usize,
+        ) {
+            // Normalize raw_weights so they sum to 1.0 (valid input)
+            let sum: f64 = raw_weights.iter().sum();
+            let normalized: Vec<f64> = raw_weights.iter().map(|w| w / sum).collect();
+
+            let mut config = SimulationConfig {
+                color_count: new_color_count,
+                color_weights: normalized,
+                ..Default::default()
+            };
+
+            config.resize_weights();
+
+            // Assert length equals new color_count
+            prop_assert_eq!(config.color_weights.len(), new_color_count,
+                "color_weights length {} != color_count {}", config.color_weights.len(), new_color_count);
+
+            // Assert each weight is in [0.0, 1.0]
+            for (i, w) in config.color_weights.iter().enumerate() {
+                prop_assert!(*w >= 0.0 && *w <= 1.0,
+                    "color_weights[{}] = {} out of [0.0, 1.0]", i, w);
+            }
+
+            // Assert sum ≈ 1.0 (within epsilon 1e-10)
+            let weight_sum: f64 = config.color_weights.iter().sum();
+            prop_assert!((weight_sum - 1.0).abs() < 1e-10,
+                "color_weights sum {} not ≈ 1.0 (diff = {})", weight_sum, (weight_sum - 1.0).abs());
+        }
+
         /// Feature: egui-settings-panel, Property 5: Input gating correctness
         /// **Validates: Requirements 12.4, 12.5**
         #[test]
@@ -564,12 +775,88 @@ mod tests {
             }
         }
 
+        /// Feature: color-distribution-panel, Property 2: Slider adjustment preserves sum
+        /// **Validates: Requirements 3.3, 7.1, 7.2**
+        #[test]
+        fn set_weight_preserves_sum(
+            // Generate a Vec<f64> of length 2-9 with positive entries, then normalize to sum 1.0
+            raw_weights in prop::collection::vec(0.01f64..10.0, 2..=9usize),
+            new_value in 0.0f64..=1.0,
+            index_frac in 0.0f64..1.0,
+        ) {
+            // Normalize raw_weights to sum 1.0
+            let sum: f64 = raw_weights.iter().sum();
+            let normalized: Vec<f64> = raw_weights.iter().map(|w| w / sum).collect();
+            let len = normalized.len();
+
+            // Pick a valid index using fractional approach
+            let index = (index_frac * len as f64).min((len - 1) as f64) as usize;
+
+            // Create a SimulationConfig with the generated weights
+            let mut config = SimulationConfig {
+                color_count: len,
+                color_weights: normalized,
+                ..Default::default()
+            };
+
+            // Call set_weight
+            config.set_weight(index, new_value);
+
+            // Assert: each weight in [0.0, 1.0]
+            for (i, w) in config.color_weights.iter().enumerate() {
+                prop_assert!(*w >= 0.0 && *w <= 1.0,
+                    "color_weights[{}] = {} out of [0.0, 1.0]", i, w);
+            }
+
+            // Assert: sum ≈ 1.0 (within epsilon 1e-10)
+            let weight_sum: f64 = config.color_weights.iter().sum();
+            prop_assert!((weight_sum - 1.0).abs() < 1e-10,
+                "color_weights sum {} not ≈ 1.0 (diff = {})", weight_sum, (weight_sum - 1.0).abs());
+        }
+
+        /// Feature: color-distribution-panel, Property 4: Weighted sampling respects zero weights
+        /// **Validates: Requirements 4.1, 4.3**
+        #[test]
+        fn zero_weight_sampling_exclusion(
+            // Generate length-1 positive entries (for the non-zero portion), then insert a 0.0 at a random position
+            raw_weights in prop::collection::vec(0.01f64..10.0, 1..=8usize),
+            zero_insert_frac in 0.0f64..1.0,
+        ) {
+            // Normalize the raw weights so they sum to 1.0
+            let sum: f64 = raw_weights.iter().sum();
+            let mut weights: Vec<f64> = raw_weights.iter().map(|w| w / sum).collect();
+
+            // Insert a 0.0 at a random position (total length becomes 2-9)
+            let insert_idx = (zero_insert_frac * (weights.len() + 1) as f64).min(weights.len() as f64) as usize;
+            weights.insert(insert_idx, 0.0);
+
+            // Verify preconditions: length 2-9, at least one zero, sum ≈ 1.0
+            prop_assert!(weights.len() >= 2 && weights.len() <= 9);
+            prop_assert!(weights[insert_idx] == 0.0);
+
+            // Construct WeightedIndex from the weight vector
+            use rand::distr::weighted::WeightedIndex;
+            use rand::prelude::*;
+            use rand::rngs::SmallRng;
+
+            let dist = WeightedIndex::new(&weights).unwrap();
+            let mut rng = SmallRng::seed_from_u64(42);
+
+            // Sample 1000 times and assert zero-weight index is never produced
+            for sample_i in 0..1000 {
+                let idx = dist.sample(&mut rng);
+                prop_assert!(idx != insert_idx,
+                    "Sample {} produced index {} which has zero weight (weights = {:?})",
+                    sample_i, insert_idx, weights);
+            }
+        }
+
         /// Feature: egui-settings-panel, Property 1: Configuration clamping invariant
         /// **Validates: Requirements 5.3, 5.4, 6.3, 7.3, 7.4, 7.5, 7.7, 7.8, 7.9, 8.3, 10.3**
         #[test]
         fn config_clamping_invariant(
             particle_count in 0usize..1_000_000,
-            color_count in 0usize..20,
+            color_count in 1usize..10,
             max_dist in -1.0f64..1.0,
             min_rel_dist in -1.0f64..2.0,
             drag_halflife in -1.0f64..2.0,
@@ -577,6 +864,7 @@ mod tests {
             density_same_color in -5.0f64..10.0,
             density_diff_color in -5.0f64..10.0,
             world_scale in -100.0f64..1000.0,
+            color_weights in prop::collection::vec(-1.0f64..2.0, 1..10usize),
         ) {
             let mut config = SimulationConfig {
                 particle_count,
@@ -588,6 +876,7 @@ mod tests {
                 density_same_color,
                 density_diff_color,
                 world_scale,
+                color_weights,
             };
 
             config.clamp_all();
@@ -612,6 +901,48 @@ mod tests {
                 "density_diff_color {} out of range", config.density_diff_color);
             prop_assert!(config.world_scale >= 16.0 && config.world_scale <= 512.0,
                 "world_scale {} out of range", config.world_scale);
+
+            // Assert color_weights are all in [0.0, 1.0] and sum ≈ 1.0
+            for (i, w) in config.color_weights.iter().enumerate() {
+                prop_assert!(*w >= 0.0 && *w <= 1.0,
+                    "color_weights[{}] = {} out of [0.0, 1.0]", i, w);
+            }
+            let weight_sum: f64 = config.color_weights.iter().sum();
+            prop_assert!((weight_sum - 1.0).abs() < 1e-10,
+                "color_weights sum {} not ≈ 1.0", weight_sum);
+        }
+
+        /// Feature: color-distribution-panel, Property 3: Clamp and normalize correctness
+        /// **Validates: Requirements 1.5**
+        #[test]
+        fn clamp_all_normalizes_color_weights(
+            color_weights in prop::collection::vec(-1.0f64..2.0, 1..10usize),
+        ) {
+            let color_count = color_weights.len();
+
+            let mut config = SimulationConfig {
+                color_count,
+                color_weights,
+                ..Default::default()
+            };
+
+            config.clamp_all();
+
+            // After clamp_all, color_count is clamped to [1, 9]
+            let expected_count = color_count.clamp(1, 9);
+            prop_assert_eq!(config.color_weights.len(), expected_count,
+                "color_weights length {} != clamped color_count {}", config.color_weights.len(), expected_count);
+
+            // Assert each weight is in [0.0, 1.0]
+            for (i, w) in config.color_weights.iter().enumerate() {
+                prop_assert!(*w >= 0.0 && *w <= 1.0,
+                    "color_weights[{}] = {} out of [0.0, 1.0]", i, w);
+            }
+
+            // Assert sum ≈ 1.0 (within epsilon 1e-10)
+            let weight_sum: f64 = config.color_weights.iter().sum();
+            prop_assert!((weight_sum - 1.0).abs() < 1e-10,
+                "color_weights sum {} not ≈ 1.0 (diff = {})", weight_sum, (weight_sum - 1.0).abs());
         }
     }
 }
