@@ -10,17 +10,17 @@ pub struct PalettePlugin;
 impl Plugin for PalettePlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, create_resource);
-        app.add_systems(Update, (
-            reset_palette::<1>.run_if(input_just_pressed(KeyCode::Digit1)),
-            reset_palette::<2>.run_if(input_just_pressed(KeyCode::Digit2)),
-            reset_palette::<3>.run_if(input_just_pressed(KeyCode::Digit3)),
-            reset_palette::<4>.run_if(input_just_pressed(KeyCode::Digit4)),
-            reset_palette::<5>.run_if(input_just_pressed(KeyCode::Digit5)),
-            reset_palette::<6>.run_if(input_just_pressed(KeyCode::Digit6)),
-            reset_palette::<7>.run_if(input_just_pressed(KeyCode::Digit7)),
-            reset_palette::<8>.run_if(input_just_pressed(KeyCode::Digit8)),
-            reset_palette::<9>.run_if(input_just_pressed(KeyCode::Digit9)),
-        ));
+        // app.add_systems(Update, (
+        //     reset_palette::<1>.run_if(input_just_pressed(KeyCode::Digit1)),
+        //     reset_palette::<2>.run_if(input_just_pressed(KeyCode::Digit2)),
+        //     reset_palette::<3>.run_if(input_just_pressed(KeyCode::Digit3)),
+        //     reset_palette::<4>.run_if(input_just_pressed(KeyCode::Digit4)),
+        //     reset_palette::<5>.run_if(input_just_pressed(KeyCode::Digit5)),
+        //     reset_palette::<6>.run_if(input_just_pressed(KeyCode::Digit6)),
+        //     reset_palette::<7>.run_if(input_just_pressed(KeyCode::Digit7)),
+        //     reset_palette::<8>.run_if(input_just_pressed(KeyCode::Digit8)),
+        //     reset_palette::<9>.run_if(input_just_pressed(KeyCode::Digit9)),
+        // ));
     }
 }
 

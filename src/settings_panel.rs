@@ -1,8 +1,11 @@
 use bevy::color::palettes::css::{BLUE, GREEN, RED};
 use bevy::ecs::schedule::common_conditions::on_message;
 use bevy::prelude::*;
-use bevy::window::{CursorGrabMode, CursorOptions};
-use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
+use bevy::camera::{CameraOutputMode, Viewport};
+use bevy::camera::visibility::RenderLayers;
+use bevy::render::render_resource::BlendState;
+use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
+use bevy_egui::{EguiContext, EguiContexts, EguiGlobalSettings, EguiPlugin, EguiPrimaryContextPass, PrimaryEguiContext, egui};
 use rand::RngExt as _;
 
 use crate::debug::DebugDurations;
@@ -20,12 +23,13 @@ impl Plugin for SettingsPanelPlugin {
         app.add_plugins(EguiPlugin::default());
         app.init_resource::<SimulationConfig>();
         app.init_resource::<PanelVisibility>();
+        app.init_resource::<PanelWidth>();
         app.init_resource::<FpsTracker>();
         app.init_resource::<CameraInputEnabled>();
         app.insert_resource(DebugDurations::with_order(&["islands", "forces", "stepping"]));
         app.add_message::<RebuildPalette>();
-        app.add_systems(Startup, setup_gizmos);
-        app.add_systems(Update, (toggle_mouse_control, gate_camera_input, rebuild_islands_if_needed, update_gizmo_scale));
+        app.add_systems(Startup, (setup_gizmos, setup_egui_camera));
+        app.add_systems(Update, (toggle_mouse_control, gate_camera_input, rebuild_islands_if_needed, update_gizmo_scale, update_camera_viewport));
         app.add_systems(
             Update,
             handle_palette_rebuild.run_if(on_message::<RebuildPalette>),
@@ -52,6 +56,51 @@ fn setup_gizmos(
     gizmo.arrow(Vec3::NEG_Z * 0.5, Vec3::Z * 0.5, BLUE);
 
     commands.spawn((BoundingBoxGizmo, Gizmo { handle: gizmos.add(gizmo), ..default() }));
+}
+
+/// Spawns a dedicated camera for egui rendering that covers the full window,
+/// and disables automatic primary context creation so we can bind it manually.
+fn setup_egui_camera(
+    mut commands: Commands,
+    mut egui_global_settings: ResMut<EguiGlobalSettings>,
+) {
+    egui_global_settings.auto_create_primary_context = false;
+
+    commands.spawn((
+        PrimaryEguiContext,
+        Camera2d,
+        RenderLayers::none(),
+        Camera {
+            order: 1,
+            output_mode: CameraOutputMode::Write {
+                blend_state: Some(BlendState::ALPHA_BLENDING),
+                clear_color: ClearColorConfig::None,
+            },
+            clear_color: ClearColorConfig::Custom(Color::NONE),
+            ..default()
+        },
+    ));
+}
+
+/// Updates the 3D camera viewport to render only in the area to the right of the panel.
+fn update_camera_viewport(
+    mut camera: Single<&mut Camera, (With<Camera3d>, Without<EguiContext>)>,
+    panel_width: Res<PanelWidth>,
+    window: Single<&Window, With<PrimaryWindow>>,
+) {
+    let panel_px = panel_width.0 as u32;
+    let win_w = window.physical_width();
+    let win_h = window.physical_height();
+
+    if panel_px < win_w {
+        camera.viewport = Some(Viewport {
+            physical_position: UVec2::new(panel_px, 0),
+            physical_size: UVec2::new(win_w - panel_px, win_h),
+            ..default()
+        });
+    } else {
+        camera.viewport = None;
+    }
 }
 
 /// Centralizes all previously-constant simulation parameters into a single mutable resource.
@@ -127,6 +176,11 @@ impl Default for PanelVisibility {
         Self { visible: true }
     }
 }
+
+/// Stores the current physical pixel width of the settings panel so the camera
+/// viewport can be offset accordingly.
+#[derive(Resource, Default)]
+pub struct PanelWidth(pub f32);
 
 /// Tracks frames-per-second with a display refresh interval of 100ms.
 #[derive(Resource)]
@@ -256,6 +310,8 @@ fn render_panel(
     time: Res<Time>,
     mut update_bodies: MessageWriter<UpdateBodies>,
     mut rebuild_palette: MessageWriter<RebuildPalette>,
+    mut panel_width: ResMut<PanelWidth>,
+    window: Single<&Window>,
 ) {
     let Ok(ctx) = contexts.ctx_mut() else {
         return;
@@ -269,7 +325,7 @@ fn render_panel(
             .max_rect(ctx.viewport_rect()),
     );
 
-    egui::Panel::left("settings_panel")
+    let panel_response = egui::Panel::left("settings_panel")
         .default_size(320.0)
         .show_inside(&mut viewport_ui, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
@@ -368,7 +424,7 @@ fn render_panel(
                                 .range(100..=500_000)
                                 .prefix("Particles: ")
                         );
-                        if response.lost_focus() || (response.changed() && ui.input(|i| i.key_pressed(egui::Key::Enter))) {
+                        if response.drag_stopped() || response.lost_focus() {
                             // Round to nearest 100
                             config.particle_count = ((config.particle_count + 50) / 100) * 100;
                             config.particle_count = config.particle_count.clamp(100, 500_000);
@@ -421,6 +477,10 @@ fn render_panel(
                     });
             });
         });
+
+    // Store the panel's physical pixel width so the camera viewport can be offset.
+    let logical_width = panel_response.response.rect.width();
+    panel_width.0 = logical_width * window.scale_factor();
 }
 
 
