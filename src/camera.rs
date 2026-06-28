@@ -7,9 +7,7 @@ use bevy::prelude::*;
 use bevy::input::{common_conditions::input_pressed};
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll};
 use bevy::window::{CursorGrabMode, CursorOptions};
-
-use crate::camera_input_enabled;
-use crate::settings_panel::CameraInputEnabled;
+use bevy_egui::EguiContexts;
 
 #[derive(Default)]
 pub struct CameraPlugin<C> {
@@ -21,14 +19,17 @@ struct PanSet;
 
 impl<C: Component<Mutability = Mutable> + Position> Plugin for CameraPlugin<C> {
     fn build(&self, app: &mut App) {
-        app.init_resource::<CameraSettings>();
         app.init_resource::<AutoOrbit>();
+        app.init_resource::<CameraInputEnabled>();
+        app.init_resource::<CameraSettings>();
         app.add_systems(Startup, setup_camera);
         app.add_systems(Update, (
-            toggle_auto_orbit,
-            cancel_auto_orbit_on_input,
-            update_camera.after(PanSet),
             auto_orbit_camera.after(update_camera),
+            cancel_auto_orbit_on_input,
+            gate_camera_input,
+            toggle_auto_orbit,
+            toggle_mouse_control,
+            update_camera.after(PanSet),
         ));
         app.add_systems(Update, (
             pan_bodies::<C,  0,  0,  1>.run_if(input_pressed(KeyCode::KeyS)),
@@ -84,10 +85,63 @@ impl Default for AutoOrbit {
     }
 }
 
+/// Gates camera systems — when false, camera ignores mouse/keyboard.
+#[derive(Resource)]
+pub struct CameraInputEnabled(bool);
+
+impl Default for CameraInputEnabled {
+    fn default() -> Self {
+        Self(true)
+    }
+}
+
+impl CameraInputEnabled {
+    pub fn enabled(&self) -> bool {
+        self.0
+    }
+}
+
 pub trait Position {
     #[allow(dead_code)]
     fn position(&self) -> &DVec3;
     fn position_mut(&mut self) -> &mut DVec3;
+}
+
+/// Run condition: returns `true` when camera input is enabled (i.e. egui does not have focus).
+pub fn camera_input_enabled(enabled: Res<CameraInputEnabled>) -> bool {
+    enabled.0
+}
+
+fn gate_camera_input(
+    mut contexts: EguiContexts,
+    mut camera_input: ResMut<CameraInputEnabled>,
+    cursor_query: Query<&CursorOptions>,
+    mouse: Res<ButtonInput<MouseButton>>,
+) {
+    // If cursor is visible (UI mode), only allow camera when left mouse is held
+    // (and not over egui)
+    for cursor in cursor_query.iter() {
+        if cursor.visible {
+            if mouse.pressed(MouseButton::Left) {
+                let Ok(ctx) = contexts.ctx_mut() else {
+                    camera_input.0 = false;
+                    return;
+                };
+                // Only allow camera if not clicking on the egui panel
+                camera_input.0 = !ctx.is_pointer_over_egui();
+            } else {
+                camera_input.0 = false;
+            }
+            return;
+        }
+    }
+
+    let Ok(ctx) = contexts.ctx_mut() else {
+        return;
+    };
+    let pointer_over_egui = ctx.is_pointer_over_egui();
+    let keyboard_captured = ctx.egui_wants_keyboard_input();
+    camera_input.0 = !pointer_over_egui && !keyboard_captured;
 }
 
 fn pan_bodies<
@@ -125,6 +179,28 @@ fn setup_camera(
         Transform::from_translation(Vec3::new(0.0, 144.0, 384.0))
             .looking_at(Vec3::ZERO, Vec3::Y),
     ));
+}
+
+fn toggle_mouse_control(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut cursor_query: Query<&mut CursorOptions>,
+    mut camera_input: ResMut<CameraInputEnabled>,
+) {
+    if keys.just_pressed(KeyCode::Escape) {
+        for mut cursor in cursor_query.iter_mut() {
+            if cursor.visible {
+                // Switch to camera mode: hide cursor, lock grab, enable camera
+                cursor.visible = false;
+                cursor.grab_mode = CursorGrabMode::Locked;
+                camera_input.0 = true;
+            } else {
+                // Switch to UI mode: show cursor, release grab, disable camera
+                cursor.visible = true;
+                cursor.grab_mode = CursorGrabMode::None;
+                camera_input.0 = false;
+            }
+        }
+    }
 }
 
 fn update_camera(

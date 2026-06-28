@@ -2,7 +2,7 @@ use bevy::{input::common_conditions::input_just_pressed, prelude::*};
 use rand::random;
 use std::{fmt::{Debug, Display, Formatter, Result}, ops::Index};
 
-use crate::{camera_input_enabled, settings_panel::SimulationConfig, traits::{NextVariant, PrevVariant}};
+use crate::{camera::camera_input_enabled, settings_panel::SimulationConfig, traits::{NextVariant, PrevVariant}};
 
 pub struct ForceMatrixPlugin;
 

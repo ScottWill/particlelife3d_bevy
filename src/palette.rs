@@ -1,7 +1,7 @@
 use bevy::input::common_conditions::input_just_pressed;
 use bevy::prelude::*;
 use rand::RngExt;
-use crate::camera_input_enabled;
+use crate::camera::camera_input_enabled;
 use crate::physics::forces::ForceMatrix;
 use crate::physics::{PointBody, PointColor};
 use crate::settings_panel::SimulationConfig;

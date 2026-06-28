@@ -10,7 +10,7 @@ use crate::palette::{PalettePlugin};
 use crate::physics::ParticlePhysicsPlugin;
 use crate::physics::{PointBody, PointPosition};
 use crate::positioners::{CurrentPositioner, PositionerPlugin, get_position};
-use crate::settings_panel::{CameraInputEnabled, SettingsPanelPlugin, SimulationConfig};
+use crate::settings_panel::{SettingsPanelPlugin, SimulationConfig};
 use crate::traits::{Fullscreen as _, NextVariant, PrevVariant};
 
 mod camera;
@@ -48,11 +48,6 @@ pub struct UpdateBodies;
 
 #[derive(Deref, Resource)]
 struct SphereHandle(Handle<Mesh>);
-
-/// Run condition: returns `true` when camera input is enabled (i.e. egui does not have focus).
-fn camera_input_enabled(enabled: Res<CameraInputEnabled>) -> bool {
-    **enabled
-}
 
 fn setup(
     mut commands: Commands,

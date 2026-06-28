@@ -4,7 +4,7 @@ use bevy::prelude::*;
 use bevy::camera::{CameraOutputMode, Viewport};
 use bevy::camera::visibility::RenderLayers;
 use bevy::render::render_resource::BlendState;
-use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
+use bevy::window::PrimaryWindow;
 use bevy_egui::{EguiContext, EguiContexts, EguiGlobalSettings, EguiPlugin, EguiPrimaryContextPass, PrimaryEguiContext, egui};
 
 use crate::debug::DebugDurations;
@@ -24,12 +24,15 @@ impl Plugin for SettingsPanelPlugin {
         app.init_resource::<PanelVisibility>();
         app.init_resource::<PanelWidth>();
         app.init_resource::<FpsTracker>();
-        app.init_resource::<CameraInputEnabled>();
         app.insert_resource(DebugDurations::with_order(&["islands", "forces", "stepping"]));
         app.add_message::<RebuildPalette>();
         app.add_message::<RedistributeColors>();
         app.add_systems(Startup, (setup_gizmos, setup_egui_camera));
-        app.add_systems(Update, (toggle_mouse_control, gate_camera_input, rebuild_islands_if_needed, update_gizmo_scale, update_camera_viewport));
+        app.add_systems(Update, (
+            rebuild_islands_if_needed, 
+            update_gizmo_scale, 
+            update_camera_viewport,
+        ));
         app.add_systems(
             Update,
             handle_palette_rebuild.run_if(on_message::<RebuildPalette>),
@@ -266,22 +269,6 @@ impl SimulationConfig {
     }
 }
 
-/// Gates camera systems — when false, camera ignores mouse/keyboard.
-#[derive(Deref, DerefMut, Resource)]
-pub struct CameraInputEnabled(bool);
-
-impl Default for CameraInputEnabled {
-    fn default() -> Self {
-        Self(true)
-    }
-}
-
-impl CameraInputEnabled {
-    pub fn enabled(&self) -> bool {
-        self.0
-    }
-}
-
 /// Triggers palette rebuild and particle recoloring for new color_count.
 #[derive(Message)]
 pub struct RebuildPalette;
@@ -337,60 +324,6 @@ impl FpsTracker {
             self.elapsed = 0.0;
         }
     }
-}
-
-fn toggle_mouse_control(
-    keys: Res<ButtonInput<KeyCode>>,
-    mut cursor_query: Query<&mut CursorOptions>,
-    mut camera_input: ResMut<CameraInputEnabled>,
-) {
-    if keys.just_pressed(KeyCode::Escape) {
-        for mut cursor in cursor_query.iter_mut() {
-            if cursor.visible {
-                // Switch to camera mode: hide cursor, lock grab, enable camera
-                cursor.visible = false;
-                cursor.grab_mode = CursorGrabMode::Locked;
-                camera_input.0 = true;
-            } else {
-                // Switch to UI mode: show cursor, release grab, disable camera
-                cursor.visible = true;
-                cursor.grab_mode = CursorGrabMode::None;
-                camera_input.0 = false;
-            }
-        }
-    }
-}
-
-fn gate_camera_input(
-    mut contexts: EguiContexts,
-    mut camera_input: ResMut<CameraInputEnabled>,
-    cursor_query: Query<&CursorOptions>,
-    mouse: Res<ButtonInput<MouseButton>>,
-) {
-    // If cursor is visible (UI mode), only allow camera when left mouse is held
-    // (and not over egui)
-    for cursor in cursor_query.iter() {
-        if cursor.visible {
-            if mouse.pressed(MouseButton::Left) {
-                let Ok(ctx) = contexts.ctx_mut() else {
-                    camera_input.0 = false;
-                    return;
-                };
-                // Only allow camera if not clicking on the egui panel
-                camera_input.0 = !ctx.is_pointer_over_egui();
-            } else {
-                camera_input.0 = false;
-            }
-            return;
-        }
-    }
-
-    let Ok(ctx) = contexts.ctx_mut() else {
-        return;
-    };
-    let pointer_over_egui = ctx.is_pointer_over_egui();
-    let keyboard_captured = ctx.egui_wants_keyboard_input();
-    camera_input.0 = !pointer_over_egui && !keyboard_captured;
 }
 
 fn handle_palette_rebuild(
