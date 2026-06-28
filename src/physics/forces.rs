@@ -2,7 +2,7 @@ use bevy::{input::common_conditions::input_just_pressed, prelude::*};
 use rand::random;
 use std::{fmt::{Debug, Display, Formatter, Result}, ops::Index};
 
-use crate::{settings_panel::SimulationConfig, traits::{NextVariant, PrevVariant}};
+use crate::{camera_input_enabled, settings_panel::SimulationConfig, traits::{NextVariant, PrevVariant}};
 
 pub struct ForceMatrixPlugin;
 
@@ -22,6 +22,8 @@ impl Plugin for ForceMatrixPlugin {
             save_forces.run_if(input_just_pressed(KeyCode::F4)),
             mirror.run_if(input_just_pressed(KeyCode::KeyM)),
             symmetry.run_if(input_just_pressed(KeyCode::KeyX)),
+        ).run_if(camera_input_enabled));
+        app.add_systems(Update, (
             load_forces_on_hold,
         ));
     }

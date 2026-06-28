@@ -8,6 +8,7 @@ use bevy::input::{common_conditions::input_pressed};
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll};
 use bevy::window::{CursorGrabMode, CursorOptions};
 
+use crate::camera_input_enabled;
 use crate::settings_panel::CameraInputEnabled;
 
 #[derive(Default)]
@@ -28,15 +29,15 @@ impl<C: Component<Mutability = Mutable> + Position> Plugin for CameraPlugin<C> {
             cancel_auto_orbit_on_input,
             update_camera.after(PanSet),
             auto_orbit_camera.after(update_camera),
-            (
-                pan_bodies::<C,  0,  0,  1>.run_if(input_pressed(KeyCode::KeyS)),
-                pan_bodies::<C,  0,  0, -1>.run_if(input_pressed(KeyCode::KeyW)),
-                pan_bodies::<C,  0, -1,  0>.run_if(input_pressed(KeyCode::KeyQ)),
-                pan_bodies::<C,  0,  1,  0>.run_if(input_pressed(KeyCode::KeyE)),
-                pan_bodies::<C, -1,  0,  0>.run_if(input_pressed(KeyCode::KeyD)),
-                pan_bodies::<C,  1,  0,  0>.run_if(input_pressed(KeyCode::KeyA)),
-            ).in_set(PanSet),
         ));
+        app.add_systems(Update, (
+            pan_bodies::<C,  0,  0,  1>.run_if(input_pressed(KeyCode::KeyS)),
+            pan_bodies::<C,  0,  0, -1>.run_if(input_pressed(KeyCode::KeyW)),
+            pan_bodies::<C,  0, -1,  0>.run_if(input_pressed(KeyCode::KeyQ)),
+            pan_bodies::<C,  0,  1,  0>.run_if(input_pressed(KeyCode::KeyE)),
+            pan_bodies::<C, -1,  0,  0>.run_if(input_pressed(KeyCode::KeyD)),
+            pan_bodies::<C,  1,  0,  0>.run_if(input_pressed(KeyCode::KeyA)),
+        ).in_set(PanSet).run_if(camera_input_enabled));
     }
 }
 
@@ -102,7 +103,7 @@ fn pan_bodies<
     camera_input: Res<CameraInputEnabled>,
 )
 {
-    if !camera_input.0 { return; }
+    if !camera_input.enabled() { return; }
     let (forward, right) = if keys.pressed(KeyCode::ShiftLeft) {
         looking_axis(camera)
     } else {
@@ -139,7 +140,7 @@ fn update_camera(
     // but still blocked when pointer is over egui (camera_input handles that).
     // Allow zoom when: camera_input is enabled, OR cursor is locked (mouse captured).
     let cursor_locked = cursor_query.iter().any(|c| c.grab_mode == CursorGrabMode::Locked);
-    let zoom_allowed = !auto_orbit.active && (camera_input.0 || cursor_locked);
+    let zoom_allowed = !auto_orbit.active && (camera_input.enabled() || cursor_locked);
 
     let zoomed = if zoom_allowed && mouse_scroll.delta.y != 0.0 {
         let delta_zoom = 1.0 - mouse_scroll.delta.y * camera_settings.zoom_speed;
@@ -152,7 +153,7 @@ fn update_camera(
         false
     };
 
-    if !camera_input.0 {
+    if !camera_input.enabled() {
         // Still update camera position if zoom changed while input is disabled
         if zoomed {
             let target = Vec3::ZERO;
@@ -205,7 +206,7 @@ fn cancel_auto_orbit_on_input(
     mut auto_orbit: ResMut<AutoOrbit>,
     camera_input: Res<CameraInputEnabled>,
 ) {
-    if !camera_input.0 { return; }
+    if !camera_input.enabled() { return; }
     if !auto_orbit.active {
         return;
     }
@@ -231,7 +232,7 @@ fn auto_orbit_camera(
     time: Res<Time>,
     camera_input: Res<CameraInputEnabled>,
 ) {
-    if !camera_input.0 { return; }
+    if !camera_input.enabled() { return; }
     if !auto_orbit.active {
         return;
     }

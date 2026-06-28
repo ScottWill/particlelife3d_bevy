@@ -6,7 +6,6 @@ use bevy::camera::visibility::RenderLayers;
 use bevy::render::render_resource::BlendState;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 use bevy_egui::{EguiContext, EguiContexts, EguiGlobalSettings, EguiPlugin, EguiPrimaryContextPass, PrimaryEguiContext, egui};
-use rand::RngExt as _;
 
 use crate::debug::DebugDurations;
 use crate::palette::Palette;
@@ -268,12 +267,18 @@ impl SimulationConfig {
 }
 
 /// Gates camera systems — when false, camera ignores mouse/keyboard.
-#[derive(Resource)]
-pub struct CameraInputEnabled(pub bool);
+#[derive(Deref, DerefMut, Resource)]
+pub struct CameraInputEnabled(bool);
 
 impl Default for CameraInputEnabled {
     fn default() -> Self {
         Self(true)
+    }
+}
+
+impl CameraInputEnabled {
+    pub fn enabled(&self) -> bool {
+        self.0
     }
 }
 
@@ -626,7 +631,7 @@ fn render_panel(
                     .default_open(true)
                     .show(ui, |ui| {
                         let mut any_changed = false;
-                        for i in 0..config.color_count {
+                        for i in 0..config.color_count.min(config.color_weights.len()) {
                             let mut weight = config.color_weights[i];
                             ui.horizontal(|ui| {
                                 ui.label(format!("{i}"));
