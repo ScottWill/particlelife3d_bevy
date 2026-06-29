@@ -12,6 +12,8 @@ use crate::palette::Palette;
 use crate::physics::forces::{ForceMatrix, ForceMatrixType};
 use crate::physics::islands::{Islands, IslandNeighborIxs, IslandNeighborhoods, IslandGrid, compute_neighbor_ixs};
 use crate::physics::{DensityAttenuation, PointBody, PointColor};
+use crate::physics::ForceBackend;
+use crate::physics::GpuUnavailableReason;
 use crate::positioners::CurrentPositioner;
 use crate::UpdateBodies;
 
@@ -394,6 +396,8 @@ fn render_panel(
     mut force_matrix: ResMut<ForceMatrix>,
     mut positioner: ResMut<CurrentPositioner>,
     mut density_attenuation: ResMut<DensityAttenuation>,
+    mut backend: ResMut<ForceBackend>,
+    gpu_unavailable: Option<Res<GpuUnavailableReason>>,
     debug_durations: Res<DebugDurations>,
     mut fps_tracker: ResMut<FpsTracker>,
     time: Res<Time>,
@@ -427,6 +431,35 @@ fn render_panel(
                         ui.label(format!("FPS: {:.0}", fps_tracker.current_fps));
                         ui.separator();
                         ui.label(format!("{}", *debug_durations));
+
+                        // Backend selector
+                        ui.separator();
+                        let gpu_disabled = gpu_unavailable.is_some();
+                        ui.horizontal(|ui| {
+                            ui.label("Backend:");
+                            if gpu_disabled {
+                                // GPU is unavailable — show disabled combo box
+                                ui.add_enabled(false, egui::Button::new("CPU (GPU unavailable)"));
+                            } else {
+                                let current = *backend;
+                                let mut selected = current;
+                                egui::ComboBox::from_id_salt("backend_selector")
+                                    .selected_text(match selected {
+                                        ForceBackend::Gpu => "GPU",
+                                        ForceBackend::Cpu => "CPU",
+                                    })
+                                    .show_ui(ui, |ui| {
+                                        ui.selectable_value(&mut selected, ForceBackend::Gpu, "GPU");
+                                        ui.selectable_value(&mut selected, ForceBackend::Cpu, "CPU");
+                                    });
+                                if selected != current {
+                                    *backend = selected;
+                                }
+                            }
+                        });
+                        if let Some(reason) = &gpu_unavailable {
+                            ui.label(egui::RichText::new(&reason.0).small().weak());
+                        }
                     });
 
                 egui::CollapsingHeader::new("Physics")

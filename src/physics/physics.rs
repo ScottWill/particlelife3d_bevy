@@ -8,8 +8,10 @@ use std::ops::AddAssign;
 use crate::physics::bodies::BodyPlugin;
 use crate::settings_panel::SimulationConfig;
 use crate::{next_state, debug::DebugDurations, traits::NextVariant, translate};
+use super::backend::ForceBackend;
 use super::bodies::{BodySnapshot, PointColor, PointPosition, PointVelocity};
 use super::forces::{ForceMatrix, ForceMatrixPlugin};
+use super::gpu::{poll_gpu_readback, GpuComputeResults, GpuForcePlugin, check_gpu_availability};
 use super::islands::{
     BodySnapshots, IslandGrid, IslandNeighborhoods, IslandsPlugin,
     assign_islands, build_neighborhoods, clear_islands, get_island_ix,
@@ -112,16 +114,19 @@ impl Plugin for ParticlePhysicsPlugin {
             BodyPlugin,
             ForceMatrixPlugin,
             IslandsPlugin,
+            GpuForcePlugin,
         ));
         app.init_state::<PhysicsRunState>();
         app.init_resource::<ParticleComputations>();
         app.init_resource::<StepOnce>();
         app.init_resource::<DensityAttenuation>();
+        app.init_resource::<ForceBackend>();
 
         // Fixed physics timestep at 1/240s
         // app.insert_resource(Time::<Fixed>::from_hz(240.0));
 
         app.add_systems(Update, (
+            check_gpu_availability,
             next_state::<PhysicsRunState>.run_if(input_just_pressed(KeyCode::Enter)),
             trigger_step.run_if(input_pressed(KeyCode::Space)),
             toggle_density_attenuation.run_if(input_just_pressed(KeyCode::F2)),
@@ -139,6 +144,7 @@ impl Plugin for ParticlePhysicsPlugin {
         ));
 
         app.add_systems(FixedUpdate, (
+            poll_gpu_readback,
             compute_forces,
             apply_forces,
             finish_step,
@@ -190,7 +196,12 @@ fn snapshot_bodies(
 }
 
 /// Compute inter-particle forces using islands and the force matrix.
+///
+/// When `ForceBackend::Gpu` is active and GPU results are ready, uses the pre-computed
+/// results from the readback system. Otherwise, falls back to the CPU Rayon path.
+#[allow(clippy::too_many_arguments)]
 fn compute_forces(
+    backend: Res<ForceBackend>,
     config: Res<SimulationConfig>,
     mut computations: ResMut<ParticleComputations>,
     mut debug_info: ResMut<DebugDurations>,
@@ -199,11 +210,58 @@ fn compute_forces(
     neighborhoods: Res<IslandNeighborhoods>,
     snapshots: Res<BodySnapshots>,
     attenuation: Res<DensityAttenuation>,
+    gpu_results: Option<Res<GpuComputeResults>>,
 ) {
     if snapshots.0.is_empty() { return }
 
     let now = Instant::now();
-    let params = PhysicsParams::from_config(&config);
+
+    match *backend {
+        ForceBackend::Gpu => {
+            if let Some(ref results) = gpu_results
+                && results.ready && results.forces.len() == snapshots.0.len()
+            {
+                // Use GPU results: copy force and density into ParticleComputations
+                computations.0.clear();
+                computations.0.extend(
+                    results.forces.iter().zip(results.densities.iter()).map(|(&force, &density)| {
+                        ParticleComputation { force, density }
+                    })
+                );
+                debug_info.add("forces", now.elapsed());
+                return;
+            }
+            // Fallback: GPU results not ready, run CPU path
+            run_cpu_forces(
+                &config, &mut computations, &force_matrix,
+                &grid, &neighborhoods, &snapshots, &attenuation,
+            );
+        }
+        ForceBackend::Cpu => {
+            run_cpu_forces(
+                &config, &mut computations, &force_matrix,
+                &grid, &neighborhoods, &snapshots, &attenuation,
+            );
+        }
+    }
+
+    debug_info.add("forces", now.elapsed());
+}
+
+/// CPU fallback: compute forces in parallel using Rayon and the island grid.
+///
+/// Extracted from `compute_forces` so both the GPU-fallback and CPU-only paths
+/// can share the same logic without duplication.
+fn run_cpu_forces(
+    config: &SimulationConfig,
+    computations: &mut ParticleComputations,
+    force_matrix: &ForceMatrix,
+    grid: &IslandGrid,
+    neighborhoods: &IslandNeighborhoods,
+    snapshots: &BodySnapshots,
+    attenuation: &DensityAttenuation,
+) {
+    let params = PhysicsParams::from_config(config);
     let use_attenuation = attenuation.0;
 
     // Snapshot previous-tick densities so we can write into computations without aliasing.
@@ -224,8 +282,6 @@ fn compute_forces(
             };
 
             let island_ix = get_island_ix(body0.position, &grid);
-            // let mut total_force = DVec3::ZERO;
-            // let mut total_density = 0.0;
             let mut total_computation = ParticleComputation::default();
 
             if let Some(neighborhood) = neighborhoods.0.get(island_ix) {
@@ -237,8 +293,6 @@ fn compute_forces(
             total_computation
         })
         .collect_into_vec(&mut computations.0);
-
-    debug_info.add("forces", now.elapsed());
 }
 
 /// Apply forces, drag, and velocity integration to body positions.
