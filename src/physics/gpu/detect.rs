@@ -137,9 +137,9 @@ pub struct GpuUnavailableReason(pub String);
 /// and logs the reason. This system runs before `poll_gpu_readback` to ensure
 /// the backend switch takes effect before any GPU results are consumed.
 pub fn check_gpu_availability(
+    mut backend: ResMut<ForceBackend>,
     mut commands: Commands,
     receiver: Option<Res<GpuAvailabilityReceiver>>,
-    mut backend: ResMut<ForceBackend>,
 ) {
     let Some(receiver) = receiver else { return };
 

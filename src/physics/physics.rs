@@ -8,6 +8,7 @@ use std::ops::AddAssign;
 use crate::physics::bodies::BodyPlugin;
 use crate::settings_panel::SimulationConfig;
 use crate::{next_state, debug::DebugDurations, traits::NextVariant, translate};
+
 use super::backend::ForceBackend;
 use super::bodies::{BodySnapshot, PointColor, PointPosition, PointVelocity};
 use super::forces::{ForceMatrix, ForceMatrixPlugin};
@@ -197,10 +198,10 @@ fn snapshot_bodies(
 /// results from the readback system. Otherwise, falls back to the CPU Rayon path.
 #[allow(clippy::too_many_arguments)]
 fn compute_forces(
-    backend: Res<ForceBackend>,
-    config: Res<SimulationConfig>,
     mut computations: ResMut<ParticleComputations>,
     mut debug_info: ResMut<DebugDurations>,
+    backend: Res<ForceBackend>,
+    config: Res<SimulationConfig>,
     force_matrix: Res<ForceMatrix>,
     grid: Res<IslandGrid>,
     neighborhoods: Res<IslandNeighborhoods>,
