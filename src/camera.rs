@@ -6,8 +6,9 @@ use bevy::math::DVec3;
 use bevy::prelude::*;
 use bevy::input::{common_conditions::input_pressed};
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll};
-use bevy::window::{CursorGrabMode, CursorOptions};
+use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 use bevy_egui::EguiContexts;
+use crate::settings_panel::PanelWidth;
 
 #[derive(Default)]
 pub struct CameraPlugin<C> {
@@ -22,6 +23,7 @@ impl<C: Component<Mutability = Mutable> + Position> Plugin for CameraPlugin<C> {
         app.init_resource::<AutoOrbit>();
         app.init_resource::<CameraInputEnabled>();
         app.init_resource::<CameraSettings>();
+        app.init_resource::<DragStartedOverEgui>();
         app.add_systems(Startup, setup_camera);
         app.add_systems(Update, (
             auto_orbit_camera.after(update_camera),
@@ -29,7 +31,7 @@ impl<C: Component<Mutability = Mutable> + Position> Plugin for CameraPlugin<C> {
             gate_camera_input,
             toggle_auto_orbit,
             toggle_mouse_control,
-            update_camera.after(PanSet),
+            update_camera.after(PanSet).after(gate_camera_input),
         ));
         app.add_systems(Update, (
             pan_bodies::<C,  0,  0,  1>.run_if(input_pressed(KeyCode::KeyS)),
@@ -101,6 +103,11 @@ impl CameraInputEnabled {
     }
 }
 
+/// Tracks whether the current mouse drag started over egui.
+/// If it did, camera input stays disabled for the entire drag.
+#[derive(Resource, Default)]
+struct DragStartedOverEgui(bool);
+
 pub trait Position {
     #[allow(dead_code)]
     fn position(&self) -> &DVec3;
@@ -115,21 +122,32 @@ pub fn camera_input_enabled(enabled: Res<CameraInputEnabled>) -> bool {
 fn gate_camera_input(
     mut contexts: EguiContexts,
     mut camera_input: ResMut<CameraInputEnabled>,
+    mut drag_over_egui: ResMut<DragStartedOverEgui>,
     cursor_query: Query<&CursorOptions>,
     mouse: Res<ButtonInput<MouseButton>>,
+    panel_width: Res<PanelWidth>,
+    window: Single<&Window, With<PrimaryWindow>>,
 ) {
+    // Check if the cursor is over the panel area using physical pixel position.
+    let pointer_over_panel = window
+        .cursor_position()
+        .map(|pos| pos.x * window.scale_factor() < panel_width.0)
+        .unwrap_or(false);
+
     // If cursor is visible (UI mode), only allow camera when left mouse is held
-    // (and not over egui)
+    // and the drag did not start over the egui panel.
     for cursor in cursor_query.iter() {
         if cursor.visible {
-            if mouse.pressed(MouseButton::Left) {
-                let Ok(ctx) = contexts.ctx_mut() else {
-                    camera_input.0 = false;
-                    return;
-                };
-                // Only allow camera if not clicking on the egui panel
-                camera_input.0 = !ctx.is_pointer_over_egui();
+            if mouse.just_pressed(MouseButton::Left) {
+                // Drag is starting — record whether it began over the panel.
+                drag_over_egui.0 = pointer_over_panel;
+                camera_input.0 = !drag_over_egui.0;
+            } else if mouse.pressed(MouseButton::Left) {
+                // Drag is ongoing — keep camera disabled if it started over the panel.
+                camera_input.0 = !drag_over_egui.0;
             } else {
+                // No mouse button held — reset drag state, disable camera.
+                drag_over_egui.0 = false;
                 camera_input.0 = false;
             }
             return;
@@ -139,7 +157,7 @@ fn gate_camera_input(
     let Ok(ctx) = contexts.ctx_mut() else {
         return;
     };
-    let pointer_over_egui = ctx.is_pointer_over_egui();
+    let pointer_over_egui = ctx.is_pointer_over_egui() || pointer_over_panel;
     let keyboard_captured = ctx.egui_wants_keyboard_input();
     camera_input.0 = !pointer_over_egui && !keyboard_captured;
 }
