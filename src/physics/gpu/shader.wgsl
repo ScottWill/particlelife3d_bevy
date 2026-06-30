@@ -85,7 +85,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
                     let dist_sqrd = dot(min_pos, min_pos);
 
                     // Early exits
-                    if (dist_sqrd > params.max_dist_sqrd || dist_sqrd < 1e-30) {
+                    if (dist_sqrd > params.max_dist_sqrd) { // || dist_sqrd < 1e-30) {
                         continue;
                     }
 
@@ -101,16 +101,14 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
                     } else {
                         // Attraction/repulsion zone based on force matrix
                         let neighbor_color = body1.color;
-                        let matrix_val = force_matrix[source_color * params.color_count + neighbor_color];
 
-                        if (matrix_val == 0.0) {
+                        var f = force_matrix[source_color * params.color_count + neighbor_color];
+                        if (f == 0.0) {
                             continue;
-                        }
-
-                        var f = matrix_val;
-                        if (f > 0.0) {
+                        } else if (f > 0.0) {
                             f = f * density_factor;
                         }
+
                         force_scalar = f * (1.0 - (1.0 + params.min_rel_dist - 2.0 * rel_dist) * params.inv_min_dist_recip);
                     }
 
