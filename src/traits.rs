@@ -1,8 +1,5 @@
-use bevy::{
-    dev_tools::fps_overlay::{FpsOverlayConfig, FpsOverlayPlugin},
-    prelude::*,
-    window::{CursorGrabMode, CursorOptions, WindowMode},
-};
+use bevy::prelude::*;
+use bevy::window::{CursorGrabMode, CursorOptions, WindowMode};
 use bevy::math::DVec3;
 use rand::RngExt as _;
 use std::f64::consts::TAU;
@@ -24,22 +21,6 @@ impl Fullscreen for WindowPlugin {
                 ..default()
             }),
             ..default()
-        }
-    }
-}
-
-pub trait FpsOverlay {
-    fn overlay() -> Self;
-}
-
-impl FpsOverlay for FpsOverlayPlugin {
-    fn overlay() -> Self {
-        Self {
-            config: FpsOverlayConfig {
-                text_config: TextFont::from_font_size(12.0),
-                text_color: Color::linear_rgb(0.0, 1.0, 0.0),
-                ..Default::default()
-            },
         }
     }
 }
