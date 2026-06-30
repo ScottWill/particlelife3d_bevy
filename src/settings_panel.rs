@@ -1,5 +1,6 @@
 use bevy::color::palettes::css::{BLUE, GREEN, RED};
 use bevy::ecs::schedule::common_conditions::on_message;
+use bevy::input::common_conditions::input_just_pressed;
 use bevy::prelude::*;
 use bevy::camera::{CameraOutputMode, Viewport};
 use bevy::camera::visibility::RenderLayers;
@@ -17,13 +18,16 @@ use crate::physics::GpuUnavailableReason;
 use crate::positioners::CurrentPositioner;
 use crate::UpdateBodies;
 
+const DEFAULT_COLOR_COUNT: usize = 5;
+const DEFAULT_PARTICLE_COUNT: usize = 50_000;
+
 pub struct SettingsPanelPlugin;
 
 impl Plugin for SettingsPanelPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(EguiPlugin::default());
         app.init_resource::<SimulationConfig>();
-        app.init_resource::<PanelVisibility>();
+        app.init_state::<PanelVisibility>();
         app.init_resource::<PanelWidth>();
         app.init_resource::<FpsTracker>();
         app.insert_resource(DebugDurations::with_order(&["islands", "forces", "stepping"]));
@@ -31,18 +35,13 @@ impl Plugin for SettingsPanelPlugin {
         app.add_message::<RedistributeColors>();
         app.add_systems(Startup, (setup_gizmos, setup_egui_camera));
         app.add_systems(Update, (
-            rebuild_islands_if_needed, 
-            update_gizmo_scale, 
+            handle_palette_rebuild.run_if(on_message::<RebuildPalette>),
+            handle_redistribute_colors.run_if(on_message::<RedistributeColors>),
+            rebuild_islands.run_if(resource_changed::<SimulationConfig>),
+            toggle_panel_visibility.run_if(input_just_pressed(KeyCode::Backspace)),
+            update_gizmo_scale,
             update_camera_viewport,
         ));
-        app.add_systems(
-            Update,
-            handle_palette_rebuild.run_if(on_message::<RebuildPalette>),
-        );
-        app.add_systems(
-            Update,
-            handle_redistribute_colors.run_if(on_message::<RedistributeColors>),
-        );
         app.add_systems(EguiPrimaryContextPass, render_panel);
     }
 }
@@ -132,8 +131,8 @@ pub struct SimulationConfig {
 impl Default for SimulationConfig {
     fn default() -> Self {
         Self {
-            particle_count: 50_000,
-            color_count: 5,
+            particle_count: DEFAULT_PARTICLE_COUNT,
+            color_count: DEFAULT_COLOR_COUNT,
             max_dist: 0.045,
             min_rel_dist: 0.333,
             drag_halflife: 0.043,
@@ -141,7 +140,7 @@ impl Default for SimulationConfig {
             density_same_color: 1.0,
             density_diff_color: 0.5,
             world_scale: 128.0,
-            color_weights: vec![1.0 / 5.0; 5],
+            color_weights: vec![1.0 / DEFAULT_COLOR_COUNT as f64; DEFAULT_COLOR_COUNT],
         }
     }
 }
@@ -238,6 +237,7 @@ impl SimulationConfig {
     /// Clamps all fields to their valid ranges.
     /// For `particle_count`, also rounds to the nearest multiple of 100.
     /// For `color_weights`, clamps each entry to [0.0, 1.0] and normalizes so they sum to 1.0.
+    #[allow(dead_code)] // used in tests
     pub fn clamp_all(&mut self) {
         self.particle_count = self.particle_count.clamp(100, 500_000);
         self.particle_count = ((self.particle_count + 50) / 100) * 100;
@@ -280,15 +280,11 @@ pub struct RebuildPalette;
 pub struct RedistributeColors;
 
 /// Controls whether the settings panel is rendered.
-#[derive(Resource)]
-pub struct PanelVisibility {
-    pub visible: bool,
-}
-
-impl Default for PanelVisibility {
-    fn default() -> Self {
-        Self { visible: true }
-    }
+#[derive(States, Default, Clone, PartialEq, Eq, Hash, Debug)]
+pub enum PanelVisibility {
+    #[default]
+    Visible,
+    Hidden,
 }
 
 /// Stores the current physical pixel width of the settings panel so the camera
@@ -391,7 +387,7 @@ fn handle_redistribute_colors(
 
 fn render_panel(
     mut contexts: EguiContexts,
-    _visibility: Res<PanelVisibility>,
+    visibility: Res<State<PanelVisibility>>,
     mut config: ResMut<SimulationConfig>,
     mut force_matrix: ResMut<ForceMatrix>,
     mut positioner: ResMut<CurrentPositioner>,
@@ -407,6 +403,11 @@ fn render_panel(
     mut panel_width: ResMut<PanelWidth>,
     window: Single<&Window>,
 ) {
+    if *visibility.get() == PanelVisibility::Hidden {
+        panel_width.0 = 0.0;
+        return;
+    }
+
     let Ok(ctx) = contexts.ctx_mut() else {
         return;
     };
@@ -513,13 +514,15 @@ fn render_panel(
                                 // Column headers
                                 ui.label(""); // empty corner cell
                                 for col in 0..color_count {
-                                    ui.label(format!("{col}"));
+                                    let color = color_code(col, color_count);
+                                    ui.label(egui::RichText::new(format!("{col}")).color(color));
                                 }
                                 ui.end_row();
 
                                 // Data rows
                                 for row in 0..color_count {
-                                    ui.label(format!("{row}")); // row header
+                                    let color = color_code(row, color_count);
+                                    ui.label(egui::RichText::new(format!("{row}")).color(color)); // row header
                                     for col in 0..color_count {
                                         let idx = col + row * color_count;
                                         if let Some(cell) = force_matrix.data.get_mut(idx) {
@@ -597,10 +600,12 @@ fn render_panel(
                     .default_open(true)
                     .show(ui, |ui| {
                         let mut any_changed = false;
-                        for i in 0..config.color_count.min(config.color_weights.len()) {
+                        let color_count = config.color_count.min(config.color_weights.len());
+                        for i in 0..color_count {
                             let mut weight = config.color_weights[i];
                             ui.horizontal(|ui| {
-                                ui.label(format!("{i}"));
+                                let color = color_code(i, color_count);
+                                ui.label(egui::RichText::new(format!("{i}")).color(color)); // row header
                                 let response = ui.add(egui::Slider::new(&mut weight, 0.0..=1.0)
                                     .step_by(0.01)
                                     .fixed_decimals(2));
@@ -630,17 +635,23 @@ fn render_panel(
     panel_width.0 = logical_width * window.scale_factor();
 }
 
+fn toggle_panel_visibility(
+    state: Res<State<PanelVisibility>>,
+    mut next_state: ResMut<NextState<PanelVisibility>>,
+) {
+    next_state.set(match state.get() {
+        PanelVisibility::Visible => PanelVisibility::Hidden,
+        PanelVisibility::Hidden => PanelVisibility::Visible,
+    });
+}
 
-fn rebuild_islands_if_needed(
+fn rebuild_islands(
     config: Res<SimulationConfig>,
     mut islands: ResMut<Islands>,
     mut neighbor_ixs: ResMut<IslandNeighborIxs>,
     mut neighborhoods: ResMut<IslandNeighborhoods>,
     mut grid: ResMut<IslandGrid>,
 ) {
-    if !config.is_changed() {
-        return;
-    }
     let new_side = config.max_dist.recip().floor() as usize;
     if new_side == grid.side {
         return;
@@ -682,6 +693,16 @@ fn update_gizmo_scale(
     }
 }
 
+#[inline]
+fn color_code(index: usize, count: usize) -> egui::Color32 {
+    let hue = (index as f32 / count as f32) * 360.0;
+    let [r, g, b, _] = Color::hsl(hue, 1.0, 0.5).to_srgba().to_f32_array();
+    egui::Color32::from_rgb(
+        (r * 255.0) as u8,
+        (g * 255.0) as u8,
+        (b * 255.0) as u8,
+    )
+}
 
 #[cfg(test)]
 mod tests {
