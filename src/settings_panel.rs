@@ -1,9 +1,8 @@
-use bevy::color::palettes::css::{BLUE, GREEN, RED};
-use bevy::ecs::schedule::common_conditions::on_message;
-use bevy::input::common_conditions::input_just_pressed;
 use bevy::prelude::*;
-use bevy::camera::{CameraOutputMode, Viewport};
-use bevy::camera::visibility::RenderLayers;
+use bevy::camera::{CameraOutputMode, Viewport, visibility::RenderLayers};
+use bevy::color::palettes::css::{BLUE, GREEN, RED};
+use bevy::ecs::{schedule::common_conditions::on_message, system::SystemParam};
+use bevy::input::common_conditions::input_just_pressed;
 use bevy::render::render_resource::BlendState;
 use bevy::window::PrimaryWindow;
 use bevy_egui::{EguiContext, EguiContexts, EguiGlobalSettings, EguiPlugin, EguiPrimaryContextPass, PrimaryEguiContext, egui};
@@ -33,14 +32,15 @@ impl Plugin for SettingsPanelPlugin {
         app.insert_resource(DebugDurations::with_order(&["islands", "forces", "stepping"]));
         app.add_message::<RebuildPalette>();
         app.add_message::<RedistributeColors>();
+        app.add_message::<RebuildIslands>();
         app.add_systems(Startup, (setup_gizmos, setup_egui_camera));
         app.add_systems(Update, (
             handle_palette_rebuild.run_if(on_message::<RebuildPalette>),
             handle_redistribute_colors.run_if(on_message::<RedistributeColors>),
-            rebuild_islands.run_if(resource_changed::<SimulationConfig>),
+            rebuild_islands.run_if(on_message::<RebuildIslands>),
             toggle_panel_visibility.run_if(input_just_pressed(KeyCode::Backspace)),
-            update_gizmo_scale,
             update_camera_viewport,
+            update_gizmo_scale,
         ));
         app.add_systems(EguiPrimaryContextPass, render_panel);
     }
@@ -279,6 +279,19 @@ pub struct RebuildPalette;
 #[derive(Message)]
 pub struct RedistributeColors;
 
+/// Triggers island grid rebuild when max_dist changes.
+#[derive(Message)]
+pub struct RebuildIslands;
+
+/// Bundles message writers used by the settings panel into a single system parameter.
+#[derive(SystemParam)]
+struct PanelMessages<'w> {
+    update_bodies: MessageWriter<'w, UpdateBodies>,
+    rebuild_palette: MessageWriter<'w, RebuildPalette>,
+    redistribute_colors: MessageWriter<'w, RedistributeColors>,
+    rebuild_islands: MessageWriter<'w, RebuildIslands>,
+}
+
 /// Controls whether the settings panel is rendered.
 #[derive(States, Default, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum PanelVisibility {
@@ -397,9 +410,7 @@ fn render_panel(
     debug_durations: Res<DebugDurations>,
     mut fps_tracker: ResMut<FpsTracker>,
     time: Res<Time>,
-    mut update_bodies: MessageWriter<UpdateBodies>,
-    mut rebuild_palette: MessageWriter<RebuildPalette>,
-    mut redistribute_colors: MessageWriter<RedistributeColors>,
+    mut messages: PanelMessages,
     mut panel_width: ResMut<PanelWidth>,
     window: Single<&Window>,
 ) {
@@ -466,7 +477,11 @@ fn render_panel(
                 egui::CollapsingHeader::new("Physics")
                     .default_open(true)
                     .show(ui, |ui| {
+                        let prev_max_dist = config.max_dist;
                         ui.add(egui::Slider::new(&mut config.max_dist, 0.01..=0.2).step_by(0.005).text("Max Dist"));
+                        if config.max_dist != prev_max_dist {
+                            messages.rebuild_islands.write(RebuildIslands);
+                        }
                         ui.add(egui::Slider::new(&mut config.min_rel_dist, 0.05..=0.95).step_by(0.05).text("Min Rel Dist"));
                         ui.add(egui::Slider::new(&mut config.drag_halflife, 0.001..=0.5).step_by(0.01).text("Drag Halflife"));
                         ui.separator();
@@ -555,7 +570,7 @@ fn render_panel(
                             config.particle_count = ((config.particle_count + 50) / 100) * 100;
                             config.particle_count = config.particle_count.clamp(100, 500_000);
                             if config.particle_count != prev_count {
-                                update_bodies.write(UpdateBodies);
+                                messages.update_bodies.write(UpdateBodies);
                             }
                         }
 
@@ -568,7 +583,7 @@ fn render_panel(
                                 .prefix("Colors: ")
                         );
                         if config.color_count != prev_colors {
-                            rebuild_palette.write(RebuildPalette);
+                            messages.rebuild_palette.write(RebuildPalette);
                         }
 
                         ui.separator();
@@ -618,7 +633,7 @@ fn render_panel(
                             });
                         }
                         if any_changed {
-                            redistribute_colors.write(RedistributeColors);
+                            messages.redistribute_colors.write(RedistributeColors);
                         }
                     });
 
