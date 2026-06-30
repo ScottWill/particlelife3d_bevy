@@ -26,9 +26,9 @@ struct PhysicsParams {
     max_dist_sqrd: f64,
     min_dist_recip: f64,
     inv_min_dist_recip: f64,
-    density_limit: f64,
-    density_same_color: f64,
-    density_diff_color: f64,
+    density_limit: f32,
+    density_same_color: f32,
+    density_diff_color: f32,
 }
 
 impl PhysicsParams {
@@ -40,9 +40,9 @@ impl PhysicsParams {
             max_dist_sqrd: config.max_dist * config.max_dist,
             min_dist_recip: config.min_rel_dist.recip(),
             inv_min_dist_recip: (1.0 - config.min_rel_dist).recip(),
-            density_limit: config.density_limit,
-            density_same_color: config.density_same_color,
-            density_diff_color: config.density_diff_color,
+            density_limit: config.density_limit as f32,
+            density_same_color: config.density_same_color as f32,
+            density_diff_color: config.density_diff_color as f32,
         }
     }
 }
@@ -65,7 +65,7 @@ impl NextVariant for PhysicsRunState {
 
 #[derive(Default)]
 struct ParticleComputation {
-    density: f64,
+    density: f32,
     force: DVec3,
 }
 
@@ -127,6 +127,7 @@ impl Plugin for ParticlePhysicsPlugin {
             next_state::<PhysicsRunState>.run_if(input_just_pressed(KeyCode::Enter)),
             trigger_step.run_if(input_pressed(KeyCode::Space)),
             toggle_density_attenuation.run_if(input_just_pressed(KeyCode::F2)),
+            toggle_force_backend.run_if(input_just_pressed(KeyCode::KeyB)),
         ));
 
         app.configure_sets(FixedUpdate, IslandSet.before(PhysicsSet));
@@ -165,6 +166,11 @@ fn trigger_step(
 /// Toggle density-based force attenuation on/off.
 fn toggle_density_attenuation(mut attenuation: ResMut<DensityAttenuation>) {
     attenuation.0 = !attenuation.0;
+}
+
+/// Toggle between GPU and CPU force backend.
+fn toggle_force_backend(mut backend: ResMut<ForceBackend>) {
+    *backend = backend.next();
 }
 
 /// After a step-once tick completes, return to Paused.
@@ -260,12 +266,12 @@ fn run_cpu_forces(
 ) {
     let params = PhysicsParams::from_config(config);
     let use_attenuation = attenuation.0;
+    let density_limit = params.density_limit;
 
-    // Snapshot previous-tick densities so we can write into computations without aliasing.
-    let prev_densities = computations.0
+    let prev_densities: Vec<f32> = computations.0
         .iter()
         .map(|c| c.density)
-        .collect::<Vec<_>>();
+        .collect();
 
     snapshots.0
         .par_iter()
@@ -273,7 +279,7 @@ fn run_cpu_forces(
         .map(|(ix, body0)| {
             let density_factor = if use_attenuation {
                 let density = prev_densities.get(ix).copied().unwrap_or_default();
-                1.0 - (density - params.density_limit).clamp(0.0, 1.0)
+                1.0 - (density - density_limit).clamp(0.0, 1.0)
             } else {
                 1.0
             };
@@ -284,7 +290,7 @@ fn run_cpu_forces(
             if let Some(neighborhood) = neighborhoods.0.get(island_ix) {
                 for &jx in neighborhood {
                     if ix == jx { continue }
-                    total_computation += get_computation(body0, &snapshots.0[jx], &force_matrix, density_factor, &params);
+                    total_computation += get_computation(body0, &snapshots.0[jx], &force_matrix, density_factor as f64, &params);
                 }
             }
             total_computation
@@ -362,6 +368,6 @@ fn get_computation(body0: &BodySnapshot, body1: &BodySnapshot, forces: &ForceMat
 
     ParticleComputation {
         force: dir * (force * params.max_dist),
-        density: weight * (1.0 - rel_dist),
+        density: weight * (1.0 - rel_dist as f32),
     }
 }

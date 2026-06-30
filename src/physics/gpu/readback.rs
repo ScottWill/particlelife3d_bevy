@@ -47,11 +47,8 @@ pub struct GpuReadbackSender {
 pub struct GpuComputeResults {
     /// Per-particle force vectors in original (ECS) ordering.
     pub forces: Vec<DVec3>,
-    /// Per-particle density values in original (ECS) ordering (f64).
-    pub densities: Vec<f64>,
-    /// Per-particle density values as f32 in original ordering,
-    /// used as prev_densities for the next GPU tick via extraction.
-    pub raw_densities_f32: Vec<f32>,
+    /// Per-particle density values in original (ECS) ordering.
+    pub densities: Vec<f32>,
     /// Whether GPU results were successfully received this tick.
     pub ready: bool,
 }
@@ -87,9 +84,7 @@ pub fn poll_gpu_readback(
     // Resize output vectors if needed
     gpu_results.forces.resize(particle_count, DVec3::ZERO);
     gpu_results.densities.resize(particle_count, 0.0);
-    gpu_results.raw_densities_f32.resize(particle_count, 0.0);
 
-    // Remap results from sorted order to original ECS ordering
     for (sorted_idx, gpu_result) in payload.results.iter().enumerate() {
         if sorted_idx >= particle_count {
             break;
@@ -101,8 +96,7 @@ pub fn poll_gpu_readback(
                 gpu_result.force_y as f64,
                 gpu_result.force_z as f64,
             );
-            gpu_results.densities[original_idx] = gpu_result.density as f64;
-            gpu_results.raw_densities_f32[original_idx] = gpu_result.density;
+            gpu_results.densities[original_idx] = gpu_result.density;
         }
     }
 
