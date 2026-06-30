@@ -48,8 +48,8 @@ impl PhysicsParams {
 
 #[derive(Debug, Default, Clone, Copy, Eq, Hash, PartialEq, States)]
 enum PhysicsRunState {
-    Running,
     #[default]
+    Running,
     Paused
 }
 
@@ -87,12 +87,8 @@ impl ParticleComputation {
 struct ParticleComputations(Vec<ParticleComputation>);
 
 /// When enabled, attractive forces are attenuated in high-density regions.
-#[derive(Resource)]
+#[derive(Default, Resource)]
 pub struct DensityAttenuation(pub bool);
-
-impl Default for DensityAttenuation {
-    fn default() -> Self { Self(true) }
-}
 
 /// When set, the physics pipeline runs once then returns to Paused.
 #[derive(Default, Resource)]

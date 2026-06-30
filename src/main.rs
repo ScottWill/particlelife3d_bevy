@@ -3,7 +3,8 @@ use bevy::input::common_conditions::{input_just_pressed, input_pressed};
 use bevy::math::DVec3;
 use bevy::prelude::*;
 use bevy::state::state::FreelyMutableState;
-use rand::RngExt as _;
+use rand::{RngExt as _, SeedableRng as _};
+use rand_chacha::ChaCha12Rng;
 
 use crate::camera::CameraPlugin;
 use crate::palette::{PalettePlugin};
@@ -113,7 +114,8 @@ fn build_batch(
     pos_type: crate::positioners::PositionerType,
     scale: f64,
 ) {
-    let mut rng = rand::rng();
+    // let mut rng = rand::rng();
+    let mut rng = ChaCha12Rng::seed_from_u64(42);
     let mut batch = Vec::with_capacity(count);
     for _ in 0..count {
         let position = get_position(&mut rng, pos_type);

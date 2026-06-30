@@ -148,10 +148,10 @@ fn prev_force(
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum ForceMatrixType {
     Chains,
-    #[default]
     Checkered,
     RandomEx,
     Random,
+    #[default]
     Snakes,
     // Symmetry(SymmetryForceMatrix),
     Zeros,

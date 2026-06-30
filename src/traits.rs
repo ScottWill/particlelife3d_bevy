@@ -48,7 +48,7 @@ pub trait RandVec3 {
     fn random_vec3(&mut self) -> DVec3;
 }
 
-impl RandVec3 for rand::rngs::ThreadRng {
+impl<R: rand::Rng> RandVec3 for R {
     fn random_vec3(&mut self) -> DVec3 {
         let a = (2.0 * self.random::<f64>() - 1.0).acos();
         let b = self.random_range(0.0..TAU);

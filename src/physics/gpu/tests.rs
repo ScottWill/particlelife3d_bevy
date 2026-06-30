@@ -3,7 +3,7 @@
 use bevy::math::DVec3;
 use proptest::prelude::*;
 
-use crate::physics::bodies::BodySnapshot;
+use crate::physics::{bodies::BodySnapshot, gpu::sort::AllocatedVecs};
 use super::sort::{compute_grid_side, sort_particles_by_cell};
 
 /// Physics parameters for the f32 reference force function (matches shader's Params struct).
@@ -320,19 +320,19 @@ fn run_f32_reference_with_grid(
     grid_side: usize,
 ) -> Vec<(f32, f32, f32, f32)> {
     let particle_count = snapshots.len();
+    let mut allocated_vecs = AllocatedVecs::default();
 
     // Sort particles by cell (same as GPU pipeline does)
-    let (sorted_buffer, cell_offsets, original_indices) =
-        sort_particles_by_cell(snapshots, grid_side);
+    let original_indices = sort_particles_by_cell(&mut allocated_vecs, snapshots, grid_side);
 
     // Parse sorted particles from buffer (f32 positions + u32 color)
     let sorted_particles: Vec<([f32; 3], u32)> = (0..particle_count)
         .map(|i| {
             let offset = i * 16;
-            let x = f32::from_le_bytes(sorted_buffer[offset..offset + 4].try_into().unwrap());
-            let y = f32::from_le_bytes(sorted_buffer[offset + 4..offset + 8].try_into().unwrap());
-            let z = f32::from_le_bytes(sorted_buffer[offset + 8..offset + 12].try_into().unwrap());
-            let color = u32::from_le_bytes(sorted_buffer[offset + 12..offset + 16].try_into().unwrap());
+            let x = f32::from_le_bytes(allocated_vecs.sorted_buffer[offset..offset + 4].try_into().unwrap());
+            let y = f32::from_le_bytes(allocated_vecs.sorted_buffer[offset + 4..offset + 8].try_into().unwrap());
+            let z = f32::from_le_bytes(allocated_vecs.sorted_buffer[offset + 8..offset + 12].try_into().unwrap());
+            let color = u32::from_le_bytes(allocated_vecs.sorted_buffer[offset + 12..offset + 16].try_into().unwrap());
             ([x, y, z], color)
         })
         .collect();
@@ -363,8 +363,8 @@ fn run_f32_reference_with_grid(
                     let nz = ((cell_z as i32 + dz + side as i32) % side as i32) as u32;
                     let cell_idx = (nx + ny * side + nz * side * side) as usize;
 
-                    let start = cell_offsets[cell_idx] as usize;
-                    let end = cell_offsets[cell_idx + 1] as usize;
+                    let start = allocated_vecs.cell_offsets[cell_idx] as usize;
+                    let end = allocated_vecs.cell_offsets[cell_idx + 1] as usize;
 
                     for j in start..end {
                         if j == idx {

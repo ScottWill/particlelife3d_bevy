@@ -1,7 +1,7 @@
 use bevy::input::common_conditions::input_just_pressed;
 use bevy::math::{DVec2, DVec3};
 use bevy::prelude::*;
-use rand::{RngExt as _, rngs::ThreadRng};
+use rand::RngExt as _;
 use std::f64::consts::TAU;
 use std::fmt::{Display, Formatter, Result as FmtResult};
 
@@ -36,7 +36,7 @@ fn prev_positioner(mut positioner: ResMut<CurrentPositioner>) {
     positioner.0 = positioner.0.prev();
 }
 
-pub fn get_position(rng: &mut ThreadRng, pos_type: PositionerType) -> DVec3 {
+pub fn get_position(rng: &mut impl rand::Rng, pos_type: PositionerType) -> DVec3 {
     match pos_type {
         PositionerType::BigBang => BigBangPositioner::get_pos(rng),
         PositionerType::Sphere => SpherePositioner::get_pos(rng),
@@ -118,19 +118,19 @@ impl PrevVariant for PositionerType {
 // }
 
 pub trait Positioner {
-    fn get_pos(rng: &mut ThreadRng) -> DVec3;
+    fn get_pos(rng: &mut impl rand::Rng) -> DVec3;
 }
 
 pub struct BigBangPositioner;
 impl Positioner for BigBangPositioner {
-    fn get_pos(rng: &mut ThreadRng) -> DVec3 {
+    fn get_pos(rng: &mut impl rand::Rng) -> DVec3 {
         0.5 + 0.00015 * rng.random::<f64>() * rng.random_vec3()
     }
 }
 
 pub struct SpherePositioner;
 impl Positioner for SpherePositioner {
-    fn get_pos(rng: &mut ThreadRng) -> DVec3 {
+    fn get_pos(rng: &mut impl rand::Rng) -> DVec3 {
         0.5 + 0.5 * rng.random::<f64>() * rng.random_vec3()
     }
 }
@@ -148,7 +148,7 @@ impl Positioner for SpherePositioner {
 
 pub struct RodPositioner;
 impl Positioner for RodPositioner {
-    fn get_pos(rng: &mut ThreadRng) -> DVec3 {
+    fn get_pos(rng: &mut impl rand::Rng) -> DVec3 {
         DVec3 {
             x: rng.random::<f64>(),
             y: 0.125 * rng.random::<f64>() + 0.43875,
@@ -159,7 +159,7 @@ impl Positioner for RodPositioner {
 
 pub struct CylinderPositioner;
 impl Positioner for CylinderPositioner {
-    fn get_pos(rng: &mut ThreadRng) -> DVec3 {
+    fn get_pos(rng: &mut impl rand::Rng) -> DVec3 {
         let circle = 0.5 + 0.125 * rng.random::<f64>().sqrt() * DVec2::from_angle(TAU * rng.random::<f64>());
         DVec3 {
             x: rng.random::<f64>(),
@@ -171,7 +171,7 @@ impl Positioner for CylinderPositioner {
 
 pub struct STorusPositioner;
 impl Positioner for STorusPositioner {
-    fn get_pos(rng: &mut ThreadRng) -> DVec3 {
+    fn get_pos(rng: &mut impl rand::Rng) -> DVec3 {
         let major_radius = 0.125;
         let tube_radius = 0.05;
         let theta = rng.random::<f64>() * TAU;
@@ -186,7 +186,7 @@ impl Positioner for STorusPositioner {
 
 pub struct MTorusPositioner;
 impl Positioner for MTorusPositioner {
-    fn get_pos(rng: &mut ThreadRng) -> DVec3 {
+    fn get_pos(rng: &mut impl rand::Rng) -> DVec3 {
         let major_radius = 0.25;
         let tube_radius = 0.075;
         let theta = rng.random::<f64>() * TAU;
@@ -201,7 +201,7 @@ impl Positioner for MTorusPositioner {
 
 pub struct LTorusPositioner;
 impl Positioner for LTorusPositioner {
-    fn get_pos(rng: &mut ThreadRng) -> DVec3 {
+    fn get_pos(rng: &mut impl rand::Rng) -> DVec3 {
         let major_radius = 1.0 / 3.0;
         let tube_radius = 0.1;
         let theta = rng.random::<f64>() * TAU;
@@ -216,7 +216,7 @@ impl Positioner for LTorusPositioner {
 
 pub struct SpiralPositioner;
 impl Positioner for SpiralPositioner {
-    fn get_pos(rng: &mut ThreadRng) -> DVec3 {
+    fn get_pos(rng: &mut impl rand::Rng) -> DVec3 {
         let max_rotations = 2.0;
         let f = rng.random::<f64>();
         let angle = max_rotations * TAU * f;
@@ -231,7 +231,7 @@ impl Positioner for SpiralPositioner {
 
 pub struct UniformPositioner;
 impl Positioner for UniformPositioner {
-    fn get_pos(rng: &mut ThreadRng) -> DVec3 {
+    fn get_pos(rng: &mut impl rand::Rng) -> DVec3 {
         DVec3 {
             x: rng.random::<f64>(),
             y: rng.random::<f64>(),
@@ -242,7 +242,7 @@ impl Positioner for UniformPositioner {
 
 pub struct UniformSpherePositioner;
 impl Positioner for UniformSpherePositioner {
-    fn get_pos(rng: &mut ThreadRng) -> DVec3 {
+    fn get_pos(rng: &mut impl rand::Rng) -> DVec3 {
         0.5 + 0.5 * rng.random::<f64>().cbrt() * rng.random_vec3()
     }
 }

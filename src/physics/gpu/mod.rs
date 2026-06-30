@@ -29,6 +29,8 @@ use readback::{create_readback_channel, GpuComputePayload, GpuReadbackSender};
 pub use detect::{check_gpu_availability, GpuUnavailableReason};
 pub use readback::{poll_gpu_readback, GpuComputeResults};
 
+use crate::physics::gpu::sort::AllocatedVecs;
+
 #[cfg(test)]
 mod tests;
 
@@ -153,6 +155,7 @@ fn prepare_gpu_forces(
     prev_densities: Res<GpuPrevDensities>,
     mut original_indices: ResMut<GpuOriginalIndices>,
     error_tracker: Res<GpuErrorTracker>,
+    mut allocated_vecs: Local<AllocatedVecs>,
 ) {
     // Skip GPU work if permanently disabled
     if error_tracker.permanently_disabled {
@@ -192,8 +195,8 @@ fn prepare_gpu_forces(
     let buffers = buffers.unwrap();
 
     // Sort particles by cell
-    let (sorted_data, cell_offsets, orig_indices) =
-        sort::sort_particles_by_cell(&snapshots.0[..particle_count as usize], grid_side as usize);
+    let orig_indices =
+        sort::sort_particles_by_cell(&mut allocated_vecs, &snapshots.0[..particle_count as usize], grid_side as usize);
 
     // Remap prev densities to sorted order
     let sorted_prev_densities: Vec<f32> = (0..particle_count as usize)
@@ -217,8 +220,8 @@ fn prepare_gpu_forces(
     );
 
     // Upload everything to the GPU
-    buffers.upload_particles(&queue, &sorted_data);
-    buffers.upload_cell_offsets(&queue, &cell_offsets);
+    buffers.upload_particles(&queue, &allocated_vecs.sorted_buffer);
+    buffers.upload_cell_offsets(&queue, &allocated_vecs.cell_offsets);
     buffers.upload_params(&queue, &params);
     buffers.upload_force_matrix(&queue, &matrix.data, matrix.color_count);
     buffers.upload_prev_densities(&queue, &sorted_prev_densities);

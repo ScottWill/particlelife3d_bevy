@@ -1,6 +1,16 @@
 //! CPU-side counting sort for spatial partitioning.
 
+use bevy::ecs::resource::Resource;
+use num_traits::identities::Zero;
+
 use crate::physics::bodies::BodySnapshot;
+
+#[derive(Default, Resource)]
+pub struct AllocatedVecs {
+    pub cell_offsets: Vec<u32>,
+    pub counts: Vec<u32>,
+    pub sorted_buffer: Vec<u8>,
+}
 
 /// Sorts particles into grid cells using a counting sort.
 ///
@@ -9,15 +19,23 @@ use crate::physics::bodies::BodySnapshot;
 /// - `cell_offsets`: start index of each cell in the sorted buffer (length = grid_side³ + 1)
 /// - `original_indices`: maps sorted index → original BodySnapshot index
 pub fn sort_particles_by_cell(
+    allocated_vecs: &mut AllocatedVecs,
     snapshots: &[BodySnapshot],
     grid_side: usize,
-) -> (Vec<u8>, Vec<u32>, Vec<u32>) {
+) -> Vec<u32> {
     let cell_count = grid_side * grid_side * grid_side;
+
+    let AllocatedVecs {
+        cell_offsets,
+        counts,
+        sorted_buffer,
+    } = allocated_vecs;
 
     // Pass 1: Histogram — count particles per cell and record each particle's cell index.
     // NOTE: We compute the cell index using f32-truncated positions because the sorted buffer
     // stores f32 values. This ensures the cell assignment matches what the GPU shader will see.
-    let mut counts = vec![0u32; cell_count];
+    // let mut counts = vec![0u32; cell_count];
+    reset(counts, cell_count);
     let cell_indices: Vec<usize> = snapshots
         .iter()
         .map(|body| {
@@ -28,15 +46,17 @@ pub fn sort_particles_by_cell(
         .collect();
 
     // Pass 2: Prefix sum → cell_offsets
-    let mut cell_offsets = vec![0u32; cell_count + 1];
+    // let mut cell_offsets = vec![0u32; cell_count + 1];
+    reset(cell_offsets, cell_count + 1);
     for i in 0..cell_count {
         cell_offsets[i + 1] = cell_offsets[i] + counts[i];
     }
 
     // Pass 3: Scatter into sorted buffer and build original_indices map
     let mut write_pos: Vec<u32> = cell_offsets[..cell_count].to_vec();
-    let mut sorted_buffer = vec![0u8; snapshots.len() * 16];
     let mut original_indices = vec![0u32; snapshots.len()];
+    // let mut sorted_buffer = vec![0u8; snapshots.len() * 16];
+    reset(sorted_buffer, snapshots.len() * 16);
 
     for (i, &cell) in cell_indices.iter().enumerate() {
         let dst = write_pos[cell] as usize;
@@ -59,7 +79,19 @@ pub fn sort_particles_by_cell(
         original_indices[dst] = i as u32;
     }
 
-    (sorted_buffer, cell_offsets, original_indices)
+    original_indices
+}
+
+#[inline]
+fn reset<T>(vec: &mut Vec<T>, len: usize)
+where
+    T: Clone + Zero
+{
+    if vec.len() == len {
+        vec.fill(T::zero());
+    } else {
+        *vec = vec![T::zero(); len];
+    }
 }
 
 /// Computes the flat cell index for a position given a grid side length.
@@ -129,15 +161,17 @@ mod tests {
         fn data_conversion_round_trip(
             snapshots in proptest::collection::vec(body_snapshot_strategy(), 10..=100)
         ) {
+            let mut allocated_vecs = AllocatedVecs::default();
+
             // Use grid_side=1 so all particles go to a single cell (cell 0).
             let grid_side = 1;
-            let (sorted_buffer, _cell_offsets, original_indices) =
-                sort_particles_by_cell(&snapshots, grid_side);
+            let original_indices =
+                sort_particles_by_cell(&mut allocated_vecs, &snapshots, grid_side);
 
             let particle_count = snapshots.len();
 
             // Verify buffer size
-            prop_assert_eq!(sorted_buffer.len(), particle_count * 16);
+            prop_assert_eq!(allocated_vecs.sorted_buffer.len(), particle_count * 16);
             prop_assert_eq!(original_indices.len(), particle_count);
 
             // Deserialize each particle from the sorted buffer and compare with original
@@ -148,10 +182,10 @@ mod tests {
                 let offset = sorted_idx * 16;
 
                 // Read f32×3 position from little-endian bytes
-                let x_bytes: [u8; 4] = sorted_buffer[offset..offset + 4].try_into().unwrap();
-                let y_bytes: [u8; 4] = sorted_buffer[offset + 4..offset + 8].try_into().unwrap();
-                let z_bytes: [u8; 4] = sorted_buffer[offset + 8..offset + 12].try_into().unwrap();
-                let color_bytes: [u8; 4] = sorted_buffer[offset + 12..offset + 16].try_into().unwrap();
+                let x_bytes: [u8; 4] = allocated_vecs.sorted_buffer[offset..offset + 4].try_into().unwrap();
+                let y_bytes: [u8; 4] = allocated_vecs.sorted_buffer[offset + 4..offset + 8].try_into().unwrap();
+                let z_bytes: [u8; 4] = allocated_vecs.sorted_buffer[offset + 8..offset + 12].try_into().unwrap();
+                let color_bytes: [u8; 4] = allocated_vecs.sorted_buffer[offset + 12..offset + 16].try_into().unwrap();
 
                 let read_x = f32::from_le_bytes(x_bytes);
                 let read_y = f32::from_le_bytes(y_bytes);
@@ -203,15 +237,16 @@ mod tests {
             particles in proptest::collection::vec(body_snapshot_strategy(), 100..=5000),
             grid_side in 5usize..=30,
         ) {
+            let mut allocated_vecs = AllocatedVecs::default();
+
             let particle_count = particles.len();
             let cell_count = grid_side * grid_side * grid_side;
 
-            let (sorted_buffer, cell_offsets, original_indices) =
-                sort_particles_by_cell(&particles, grid_side);
+            let original_indices = sort_particles_by_cell(&mut allocated_vecs, &particles, grid_side);
 
             // (a) cell_offsets has length grid_side³ + 1
             prop_assert_eq!(
-                cell_offsets.len(),
+                allocated_vecs.cell_offsets.len(),
                 cell_count + 1,
                 "cell_offsets length should be grid_side³ + 1"
             );
@@ -219,35 +254,35 @@ mod tests {
             // (b) cell_offsets is non-decreasing
             for i in 0..cell_count {
                 prop_assert!(
-                    cell_offsets[i] <= cell_offsets[i + 1],
+                    allocated_vecs.cell_offsets[i] <= allocated_vecs.cell_offsets[i + 1],
                     "cell_offsets must be non-decreasing: cell_offsets[{}]={} > cell_offsets[{}]={}",
-                    i, cell_offsets[i], i + 1, cell_offsets[i + 1]
+                    i, allocated_vecs.cell_offsets[i], i + 1, allocated_vecs.cell_offsets[i + 1]
                 );
             }
 
             // (b) cell_offsets[last] = particle_count
             prop_assert_eq!(
-                cell_offsets[cell_count] as usize,
+                allocated_vecs.cell_offsets[cell_count] as usize,
                 particle_count,
                 "cell_offsets[last] should equal particle_count"
             );
 
             // (c) Every particle in range [cell_offsets[i], cell_offsets[i+1]) maps to cell i
             for cell_idx in 0..cell_count {
-                let start = cell_offsets[cell_idx] as usize;
-                let end = cell_offsets[cell_idx + 1] as usize;
+                let start = allocated_vecs.cell_offsets[cell_idx] as usize;
+                let end = allocated_vecs.cell_offsets[cell_idx + 1] as usize;
 
                 for sorted_idx in start..end {
                     // Parse the 16-byte entry from sorted_buffer
                     let offset = sorted_idx * 16;
                     let x = f32::from_le_bytes(
-                        sorted_buffer[offset..offset + 4].try_into().unwrap(),
+                        allocated_vecs.sorted_buffer[offset..offset + 4].try_into().unwrap(),
                     );
                     let y = f32::from_le_bytes(
-                        sorted_buffer[offset + 4..offset + 8].try_into().unwrap(),
+                        allocated_vecs.sorted_buffer[offset + 4..offset + 8].try_into().unwrap(),
                     );
                     let z = f32::from_le_bytes(
-                        sorted_buffer[offset + 8..offset + 12].try_into().unwrap(),
+                        allocated_vecs.sorted_buffer[offset + 8..offset + 12].try_into().unwrap(),
                     );
 
                     // Compute the cell index from the stored f32 position
