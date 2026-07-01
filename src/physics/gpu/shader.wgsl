@@ -102,7 +102,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
                         // Attraction/repulsion zone based on force matrix
                         let neighbor_color = body1.color;
 
-                        var f = force_matrix[source_color * params.color_count + neighbor_color];
+                        var f = force_matrix[source_color + neighbor_color * params.color_count];
                         if (f == 0.0) {
                             continue;
                         } else if (f > 0.0) {

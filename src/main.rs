@@ -33,7 +33,7 @@ fn main() {
             ParticlePhysicsPlugin,
             PositionerPlugin,
             SettingsPanelPlugin,
-            TrackingPlugin,
+            // TrackingPlugin,
         ))
         .add_message::<UpdateBodies>()
         .add_systems(Startup, setup)

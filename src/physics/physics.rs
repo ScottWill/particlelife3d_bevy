@@ -10,7 +10,7 @@ use crate::settings_panel::SimulationConfig;
 use crate::{next_state, debug::DebugDurations, traits::NextVariant, translate};
 
 use super::backend::ForceBackend;
-use super::bodies::{BodySnapshot, PointColor, PointPosition, PointVelocity};
+use super::bodies::{BodySnapshot, PointBodyIndex, PointColor, PointPosition, PointVelocity};
 use super::forces::{ForceMatrix, ForceMatrixPlugin};
 use super::gpu::{poll_gpu_readback, GpuComputeResults, GpuForcePlugin, check_gpu_availability};
 use super::islands::{
@@ -187,10 +187,11 @@ fn finish_step(
 /// Collect body snapshots into the shared resource.
 fn snapshot_bodies(
     mut snapshots: ResMut<BodySnapshots>,
-    query: Query<(&PointColor, &PointPosition)>,
+    mut query: Query<(&PointColor, &PointPosition, &mut PointBodyIndex)>,
 ) {
     snapshots.0.clear();
-    for (color, position) in query.iter() {
+    for (idx, (color, position, mut body_index)) in query.iter_mut().enumerate() {
+        body_index.0 = idx;
         snapshots.0.push(BodySnapshot {
             color: color.0,
             position: position.0,
@@ -302,7 +303,7 @@ fn run_cpu_forces(
 fn apply_forces(
     config: Res<SimulationConfig>,
     mut debug_info: ResMut<DebugDurations>,
-    mut query: Query<(&mut PointVelocity, &mut PointPosition)>,
+    mut query: Query<(&PointBodyIndex, &mut PointVelocity, &mut PointPosition)>,
     computations: Res<ParticleComputations>,
     time: Res<Time>,
 ) {
@@ -314,14 +315,11 @@ fn apply_forces(
     let now = Instant::now();
     let drag_halflife_recip = config.drag_halflife.recip();
 
-    // DO NOT change these nested loop patterns, it is more performant than a single iter_mut!
-    for (mut velocities, positions) in query.contiguous_iter_mut().unwrap() {
-        for (i, (velocity, position)) in velocities.iter_mut().zip(positions).enumerate() {
-            let force = computations.0[i].force;
-            **velocity *= 0.5f64.powf(drag_halflife_recip * dt);
-            **velocity += force * dt;
-            **position += **velocity * dt;
-        }
+    for (body_index, mut velocity, mut position) in &mut query {
+        let force = computations.0[body_index.0].force;
+        **velocity *= 0.5f64.powf(drag_halflife_recip * dt);
+        **velocity += force * dt;
+        **position += **velocity * dt;
     }
 
     debug_info.add("stepping", now.elapsed());

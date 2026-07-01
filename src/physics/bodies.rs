@@ -6,7 +6,7 @@ use rand::random_range;
 use crate::{camera::Position, palette::Palette, settings_panel::SimulationConfig};
 
 #[derive(Clone, Copy, Component, Default, Deref, DerefMut)]
-pub struct PointBodyIndex(usize);
+pub struct PointBodyIndex(pub usize);
 
 #[derive(Clone, Copy, Component, Debug, Default, Deref, DerefMut)]
 pub struct PointColor(pub usize);
