@@ -85,7 +85,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
                     let dist_sqrd = dot(min_pos, min_pos);
 
                     // Early exits
-                    if (dist_sqrd > params.max_dist_sqrd) { // || dist_sqrd < 1e-30) {
+                    if (dist_sqrd > params.max_dist_sqrd || dist_sqrd < 1e-30) {
                         continue;
                     }
 

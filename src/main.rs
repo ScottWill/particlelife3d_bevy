@@ -12,6 +12,7 @@ use crate::physics::ParticlePhysicsPlugin;
 use crate::physics::{PointBody, PointPosition};
 use crate::positioners::{CurrentPositioner, PositionerPlugin, get_position};
 use crate::settings_panel::{SettingsPanelPlugin, SimulationConfig};
+use crate::tracking::{TrackedParticle, TrackingPlugin};
 use crate::traits::{Fullscreen as _, NextVariant, PrevVariant};
 
 mod camera;
@@ -20,6 +21,7 @@ mod palette;
 mod physics;
 mod positioners;
 mod settings_panel;
+mod tracking;
 mod traits;
 
 fn main() {
@@ -31,6 +33,7 @@ fn main() {
             ParticlePhysicsPlugin,
             PositionerPlugin,
             SettingsPanelPlugin,
+            TrackingPlugin,
         ))
         .add_message::<UpdateBodies>()
         .add_systems(Startup, setup)
@@ -114,10 +117,20 @@ fn build_batch(
     pos_type: crate::positioners::PositionerType,
     scale: f64,
 ) {
-    // let mut rng = rand::rng();
     let mut rng = ChaCha12Rng::seed_from_u64(42);
-    let mut batch = Vec::with_capacity(count);
-    for _ in 0..count {
+
+    // spawn tracked particle
+    let position = get_position(&mut rng, pos_type);
+    commands.spawn((
+        TrackedParticle,
+        PointBody,
+        PointPosition(position),
+        Mesh3d(mesh.clone()),
+        Transform::from_translation(translate(position, scale)),
+    ));
+
+    let mut batch = Vec::with_capacity(count - 1);
+    for _ in 0..(count - 1) {
         let position = get_position(&mut rng, pos_type);
         batch.push((
             PointBody,
@@ -126,8 +139,8 @@ fn build_batch(
             Transform::from_translation(translate(position, scale)),
         ));
     }
-
     commands.spawn_batch(batch);
+
 }
 
 #[inline]
